@@ -1,10 +1,22 @@
-import { structuredAnalysisSchema, type StructuredAnalysis, validateStructuredAnalysis } from './openaiSchema';
+import {
+  structuredAnalysisSchema,
+  type StructuredAnalysis,
+  validateStructuredOutput,
+} from './openaiSchema';
+
+type OpenAIOutputSchemaConfig = {
+  enabled: boolean;
+  name: string;
+  strict: boolean;
+  schema: Record<string, unknown>;
+};
 
 type OpenAIConfig = {
   model: string;
   temperature: number;
   systemPrompt: string;
   userPromptTemplate: string;
+  outputSchema?: OpenAIOutputSchemaConfig;
 };
 
 export type OpenAIAnalysisResult = {
@@ -34,53 +46,6 @@ const extractOutputText = (payload: any): string => {
   }
 
   return '';
-};
-
-export const analyzeWithOpenAIText = async (
-  proposalNumber: string,
-  sanitizedPayload: unknown,
-  config: OpenAIConfig,
-  apiKey: string,
-): Promise<{ text: string; raw: unknown }> => {
-  const dataJson = JSON.stringify(sanitizedPayload, null, 2);
-  const userPrompt = renderTemplate(config.userPromptTemplate, {
-    proposalNumber,
-    dataJson,
-  });
-
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: config.temperature,
-      input: [
-        { role: 'system', content: config.systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`OpenAI error: ${response.status} ${errorBody}`);
-  }
-
-  const apiPayload = await response.json();
-
-  if (apiPayload.error) {
-    throw new Error(apiPayload.error.message ?? 'Erro retornado pela OpenAI.');
-  }
-
-  const text = extractOutputText(apiPayload).trim();
-  if (text) {
-    return { text, raw: apiPayload };
-  }
-
-  return { text: JSON.stringify(apiPayload), raw: apiPayload };
 };
 
 const extractJsonOutput = (payload: any): unknown | null => {
@@ -120,6 +85,102 @@ const extractRefusal = (payload: any): string | null => {
   return null;
 };
 
+const isSchemaUnsupportedError = (status: number, errorText: string) => {
+  if (status < 400) return false;
+  const lower = errorText.toLowerCase();
+  return lower.includes('json_schema') || lower.includes('response_format') || lower.includes('schema');
+};
+
+const buildRequestBody = (
+  config: OpenAIConfig,
+  userPrompt: string,
+  formatType?: 'json_schema' | 'json_object',
+): Record<string, unknown> => {
+  const body: Record<string, unknown> = {
+    model: config.model,
+    temperature: config.temperature,
+    input: [
+      { role: 'system', content: config.systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+  };
+
+  if (formatType === 'json_schema' && config.outputSchema) {
+    body.text = {
+      format: {
+        type: 'json_schema',
+        name: config.outputSchema.name,
+        strict: config.outputSchema.strict,
+        schema: config.outputSchema.schema,
+      },
+    };
+  }
+
+  if (formatType === 'json_object') {
+    body.text = {
+      format: {
+        type: 'json_object',
+      },
+    };
+  }
+
+  return body;
+};
+
+const postOpenAI = async (body: Record<string, unknown>, apiKey: string) => {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const rawText = await response.text();
+  let payload: any = null;
+  try {
+    payload = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    payload = null;
+  }
+
+  return { response, payload, rawText };
+};
+
+export const analyzeWithOpenAIText = async (
+  proposalNumber: string,
+  sanitizedPayload: unknown,
+  config: OpenAIConfig,
+  apiKey: string,
+): Promise<{ text: string; raw: unknown }> => {
+  const dataJson = JSON.stringify(sanitizedPayload, null, 2);
+  const userPrompt = renderTemplate(config.userPromptTemplate, {
+    proposalNumber,
+    dataJson,
+  });
+
+  const { response, payload, rawText } = await postOpenAI(
+    buildRequestBody(config, userPrompt),
+    apiKey,
+  );
+
+  if (!response.ok) {
+    throw new Error(`OpenAI error: ${response.status} ${rawText}`);
+  }
+
+  if (payload?.error) {
+    throw new Error(payload.error.message ?? 'Erro retornado pela OpenAI.');
+  }
+
+  const text = extractOutputText(payload ?? {}).trim();
+  if (text) {
+    return { text, raw: payload };
+  }
+
+  return { text: JSON.stringify(payload ?? {}), raw: payload };
+};
+
 export const analyzeWithOpenAI = async (
   proposalNumber: string,
   payloadForModel: unknown,
@@ -132,52 +193,57 @@ export const analyzeWithOpenAI = async (
     dataJson,
   });
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: config.temperature,
-      input: [
-        { role: 'system', content: config.systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'proposal_analysis',
-          strict: true,
-          schema: structuredAnalysisSchema,
-        },
-      },
-    }),
-  });
+  const schemaConfig = config.outputSchema ?? {
+    enabled: false,
+    name: 'support_analysis',
+    strict: true,
+    schema: structuredAnalysisSchema,
+  };
+  const schemaForValidation = schemaConfig.schema ?? structuredAnalysisSchema;
+
+  const { response, payload, rawText } = await postOpenAI(
+    buildRequestBody(config, userPrompt, schemaConfig.enabled ? 'json_schema' : undefined),
+    apiKey,
+  );
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`OpenAI error: ${response.status} ${errorBody}`);
+    if (schemaConfig.enabled && isSchemaUnsupportedError(response.status, rawText)) {
+      const retry = await postOpenAI(buildRequestBody(config, userPrompt, 'json_object'), apiKey);
+      if (!retry.response.ok) {
+        const retryError = retry.payload?.error?.message ?? retry.rawText;
+        return { error: `OpenAI error: ${retry.response.status} ${retryError}` };
+      }
+      return processOpenAIPayload(retry.payload, schemaForValidation);
+    }
+
+    return { error: `OpenAI error: ${response.status} ${rawText}` };
   }
 
-  const apiPayload = await response.json();
+  return processOpenAIPayload(payload, schemaForValidation);
+};
 
-  if (apiPayload.error) {
-    return { error: apiPayload.error.message ?? 'Erro retornado pela OpenAI.' };
+const processOpenAIPayload = (
+  payload: any,
+  schemaForValidation: Record<string, unknown>,
+): OpenAIAnalysisResult => {
+  if (payload?.error) {
+    return { error: payload.error.message ?? 'Erro retornado pela OpenAI.' };
   }
 
-  const refusal = extractRefusal(apiPayload);
+  const refusal = extractRefusal(payload);
   if (refusal) {
     return { refusal };
   }
 
-  const jsonOutput = extractJsonOutput(apiPayload);
-  if (jsonOutput && validateStructuredAnalysis(jsonOutput)) {
-    return { structured: jsonOutput };
+  const jsonOutput = extractJsonOutput(payload);
+  if (jsonOutput) {
+    const { valid } = validateStructuredOutput(schemaForValidation, jsonOutput);
+    if (valid) {
+      return { structured: jsonOutput as StructuredAnalysis };
+    }
   }
 
-  const text = extractOutputText(apiPayload);
+  const text = extractOutputText(payload);
   return {
     rawText: text.trim() || undefined,
     error: 'Resposta da OpenAI fora do schema esperado.',

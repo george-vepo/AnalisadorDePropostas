@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { validateStructuredAnalysis } from '../openaiSchema';
+import {
+  structuredAnalysisSchema,
+  validateStructuredAnalysis,
+  validateStructuredOutput,
+} from '../openaiSchema';
 
 describe('validateStructuredAnalysis', () => {
   it('accepts a valid structured analysis', () => {
@@ -24,5 +28,32 @@ describe('validateStructuredAnalysis', () => {
     };
 
     expect(validateStructuredAnalysis(invalid)).toBe(false);
+  });
+});
+
+describe('validateStructuredOutput', () => {
+  it('validates against a provided schema', () => {
+    const valid = {
+      title: 'Teste',
+      summary: 'Resumo',
+      probable_cause: 'Causa',
+      confidence: 90,
+      severity: 'P1',
+      evidence: ['E1'],
+      next_steps: ['Passo 1'],
+      questions: ['Pergunta'],
+    };
+
+    const result = validateStructuredOutput(structuredAnalysisSchema, valid);
+    expect(result.valid).toBe(true);
+  });
+
+  it('flags invalid payloads against the schema', () => {
+    const invalid = {
+      title: 'Sem campos obrigatórios',
+    };
+
+    const result = validateStructuredOutput(structuredAnalysisSchema, invalid);
+    expect(result.valid).toBe(false);
   });
 });

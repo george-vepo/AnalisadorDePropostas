@@ -3,53 +3,79 @@ import { evaluateWhen, getValuesByPath } from '../runbooks/conditions';
 
 export type SignalsConfig = {
   enabled: boolean;
+  maxItemsPerArray: number;
   includePaths: string[];
   rules: SignalRule[];
 };
 
 export type ExtractedSignals = {
-  statusSummary: Record<string, number>;
-  flags: Array<{ id: string; description: string; severity?: SignalRule['severity'] }>; 
+  proposal: {
+    codProposta?: string;
+    statusSituacao?: string;
+    statusAssinatura?: string;
+    statusPago?: string;
+    datas: {
+      cadastro?: string;
+      assinatura?: string;
+      alteracao?: string;
+      sensibilizacao?: string;
+    };
+  };
   counts: {
-    errors: number;
-    integrations: number;
+    integracoesTotal: number;
+    errosTotal: number;
+    logsTotal: number;
   };
-  timestamps: {
-    createdAt?: string;
+  recent: {
     lastUpdate?: string;
-    lastFailure?: string;
-    ageHours?: number;
+    lastError?: string;
   };
-  topErrors: Array<{ code: string; message?: string; count: number }>;
-  integrations: Array<{ name: string; status: string }>;
-  includePaths: Record<string, Array<string | number | boolean>>;
+  flags: string[];
+  topErrors: Array<{ codigo?: string; mensagemCurta?: string }>;
+  integrationsSummary: Array<{ nome?: string; status?: string; erroCodigo?: string }>;
+  safeFields: Record<string, Array<string | number | boolean>>;
 };
 
-const MAX_ERRORS = 5;
-const MAX_INTEGRATIONS = 10;
-const MAX_INCLUDE_VALUES = 5;
+const MAX_STRING_LENGTH = 160;
+
+const EMAIL_REGEX = /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g;
+const CPF_REGEX = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{11}\b/;
+const PHONE_REGEX = /\b\d{10,13}\b/;
+const LONG_DIGITS_REGEX = /\d{6,}/;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 };
 
-const maskSensitive = (value: string): string => {
-  const noEmails = value.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]');
-  return noEmails.replace(/\d/g, '#');
+const sanitizeText = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (EMAIL_REGEX.test(trimmed) || CPF_REGEX.test(trimmed) || PHONE_REGEX.test(trimmed)) {
+    return '[REMOVIDO]';
+  }
+  if (LONG_DIGITS_REGEX.test(trimmed)) {
+    return '[REMOVIDO]';
+  }
+  const cleaned = trimmed.replace(EMAIL_REGEX, '[REMOVIDO]');
+  const normalized = cleaned.replace(/\s+/g, ' ');
+  return normalized.length > MAX_STRING_LENGTH
+    ? `${normalized.slice(0, MAX_STRING_LENGTH)}...`
+    : normalized;
 };
 
-const sanitizeValue = (value: unknown): string | number | boolean | null => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const masked = maskSensitive(trimmed);
-    return masked.length > 120 ? `${masked.slice(0, 120)}...` : masked;
-  }
+const sanitizeIdentifier = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.length > MAX_STRING_LENGTH ? trimmed.slice(0, MAX_STRING_LENGTH) : trimmed;
+};
+
+const sanitizePrimitive = (value: unknown): string | number | boolean | null => {
+  if (typeof value === 'string') return sanitizeText(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   return null;
 };
 
-const extractDates = (value: unknown): Date | null => {
+const parseDate = (value: unknown): Date | null => {
   if (typeof value === 'string' || typeof value === 'number') {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
@@ -57,105 +83,150 @@ const extractDates = (value: unknown): Date | null => {
   return null;
 };
 
-export const extractSignals = (normalizedRawJson: unknown, config: SignalsConfig): ExtractedSignals => {
-  const statusCounts: Record<string, number> = {};
-  const errorMap = new Map<string, { code: string; message?: string; count: number }>();
-  const integrations: Array<{ name: string; status: string }> = [];
-  const includePaths: Record<string, Array<string | number | boolean>> = {};
-  const flags: Array<{ id: string; description: string; severity?: SignalRule['severity'] }> = [];
-
-  const createdAtDates: Date[] = [];
-  const updateDates: Date[] = [];
-  const failureDates: Date[] = [];
-
-  const walk = (value: unknown) => {
-    if (Array.isArray(value)) {
-      value.forEach(walk);
-      return;
+const firstValue = (data: unknown, paths: string[]): unknown => {
+  for (const path of paths) {
+    const values = getValuesByPath(data, path);
+    for (const value of values) {
+      if (value !== undefined && value !== null) return value;
     }
+  }
+  return undefined;
+};
 
-    if (!isPlainObject(value)) return;
+const firstString = (data: unknown, paths: string[], allowIdentifiers = false): string | undefined => {
+  const value = firstValue(data, paths);
+  if (typeof value === 'string') {
+    return allowIdentifiers ? sanitizeIdentifier(value) ?? undefined : sanitizeText(value) ?? undefined;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return undefined;
+};
 
-    if (typeof value.status === 'string') {
-      const key = value.status.trim();
-      if (key) {
-        statusCounts[key] = (statusCounts[key] ?? 0) + 1;
-      }
-    }
-
-    const hasIntegrationName = typeof value.nome === 'string' || typeof value.name === 'string';
-    if (hasIntegrationName && typeof value.status === 'string') {
-      const name = sanitizeValue(value.nome ?? value.name);
-      const status = sanitizeValue(value.status);
-      if (name && status && integrations.length < MAX_INTEGRATIONS) {
-        integrations.push({ name: String(name), status: String(status) });
-      }
-    }
-
-    const codeCandidate = value.erroCodigo ?? value.errorCode ?? value.code;
-    if (typeof codeCandidate === 'string' || typeof codeCandidate === 'number') {
-      const messageCandidate = value.erroMensagem ?? value.errorMessage ?? value.message;
-      const code = String(codeCandidate);
-      const message = typeof messageCandidate === 'string' ? String(sanitizeValue(messageCandidate)) : undefined;
-      const signature = `${code}|${message ?? ''}`;
-      const existing = errorMap.get(signature);
-      if (existing) {
-        existing.count += 1;
-      } else if (errorMap.size < MAX_ERRORS) {
-        errorMap.set(signature, { code, message, count: 1 });
-      }
-    }
-
-    Object.entries(value).forEach(([key, child]) => {
-      const lowerKey = key.toLowerCase();
-      const date = extractDates(child);
-      if (date) {
-        if (/(criacao|created)/i.test(lowerKey)) createdAtDates.push(date);
-        if (/(atual|update)/i.test(lowerKey)) updateDates.push(date);
-        if (/(falha|erro|error)/i.test(lowerKey)) failureDates.push(date);
-      }
-      walk(child);
+const latestDateFromPaths = (data: unknown, paths: string[]): string | undefined => {
+  const dates: Date[] = [];
+  paths.forEach((path) => {
+    const values = getValuesByPath(data, path);
+    values.forEach((value) => {
+      const date = parseDate(value);
+      if (date) dates.push(date);
     });
+  });
+  if (dates.length === 0) return undefined;
+  dates.sort((a, b) => b.getTime() - a.getTime());
+  return dates[0]?.toISOString();
+};
+
+const getArrayItems = (data: unknown, paths: string[]): unknown[] => {
+  for (const path of paths) {
+    const values = getValuesByPath(data, path);
+    if (values.length > 0) return values;
+  }
+  return [];
+};
+
+export const extractSignals = (rawData: unknown, config: SignalsConfig): ExtractedSignals => {
+  const maxItems = Math.max(1, config.maxItemsPerArray ?? 50);
+
+  const integracoes = getArrayItems(rawData, ['integracoes[]', 'set2[]']);
+  const logs = getArrayItems(rawData, ['logs[]', 'set3[]']);
+  const erros = getArrayItems(rawData, ['erros[]', 'set1[]']);
+
+  const proposal = {
+    codProposta: firstString(rawData, ['proposta.COD_PROPOSTA', 'set0[].COD_PROPOSTA', 'cod_proposta'], true),
+    statusSituacao: firstString(rawData, ['proposta.STA_SITUACAO', 'set0[].STA_SITUACAO']),
+    statusAssinatura: firstString(rawData, [
+      'proposta.STA_ASSINATURA',
+      'assinaturaDigital[].STA_ASSINATURA',
+      'set0[].STA_ASSINATURA',
+    ]),
+    statusPago: firstString(rawData, ['proposta.STA_PAGO', 'pagamento.STA_PAGAMENTO', 'set0[].STA_PAGO']),
+    datas: {
+      cadastro: latestDateFromPaths(rawData, ['proposta.DTH_CADASTRO', 'set0[].DTA_CADASTRO']),
+      assinatura: latestDateFromPaths(rawData, ['assinaturaDigital[].DTH_EVENTO', 'set0[].DTA_ASSINATURA']),
+      alteracao: latestDateFromPaths(rawData, ['proposta.DTH_ALTERACAO', 'set0[].DTA_ALTERACAO']),
+      sensibilizacao: latestDateFromPaths(rawData, ['proposta.DTA_SENSIBILIZACAO', 'set0[].DTA_SENSIBILIZACAO']),
+    },
   };
 
-  walk(normalizedRawJson);
+  const counts = {
+    integracoesTotal: integracoes.length,
+    errosTotal: erros.length,
+    logsTotal: logs.length,
+  };
 
+  const recent = {
+    lastUpdate: latestDateFromPaths(rawData, [
+      'proposta.DTH_ALTERACAO',
+      'integracoes[].DTH_EVENTO',
+      'logs[].DTH_ACESSO',
+      'set0[].DTA_ALTERACAO',
+      'set2[].DTH_EVENTO',
+      'set3[].DTH_ACESSO',
+    ]),
+    lastError: latestDateFromPaths(rawData, ['erros[].DTH_ERRO', 'logs[].DTH_ACESSO', 'set1[].DTH_ERRO']),
+  };
+
+  const errorMap = new Map<string, { codigo?: string; mensagemCurta?: string }>();
+  erros.forEach((entry) => {
+    if (!isPlainObject(entry)) return;
+    const codigoRaw =
+      entry.COD_ERRO ?? entry.codigo ?? entry.code ?? entry.erroCodigo ?? entry.errorCode ?? entry.ERRO_CODIGO;
+    const mensagemRaw =
+      entry.DES_ERRO ?? entry.mensagem ?? entry.message ?? entry.erroMensagem ?? entry.errorMessage;
+    const codigo = typeof codigoRaw === 'string' ? sanitizeIdentifier(codigoRaw) ?? undefined : codigoRaw;
+    const mensagem = typeof mensagemRaw === 'string' ? sanitizeText(mensagemRaw) ?? undefined : undefined;
+    const signature = `${codigo ?? ''}|${mensagem ?? ''}`;
+    if (!errorMap.has(signature)) {
+      errorMap.set(signature, { codigo: codigo ? String(codigo) : undefined, mensagemCurta: mensagem });
+    }
+  });
+
+  const topErrors = Array.from(errorMap.values()).slice(0, maxItems);
+
+  const integrationsSummary = integracoes
+    .filter(isPlainObject)
+    .map((entry) => {
+      const nomeRaw = entry.DES_INTEGRACAO ?? entry.nome ?? entry.name;
+      const statusRaw = entry.STA_STATUS ?? entry.status;
+      const erroCodigoRaw = entry.COD_ERRO ?? entry.erroCodigo ?? entry.errorCode;
+      const nome = typeof nomeRaw === 'string' ? sanitizeText(nomeRaw) ?? undefined : undefined;
+      const status = typeof statusRaw === 'string' ? sanitizeIdentifier(statusRaw) ?? undefined : undefined;
+      const erroCodigo = typeof erroCodigoRaw === 'string' ? sanitizeIdentifier(erroCodigoRaw) ?? undefined : undefined;
+      return {
+        nome,
+        status,
+        erroCodigo,
+      };
+    })
+    .filter((entry) => entry.nome || entry.status || entry.erroCodigo)
+    .slice(0, maxItems);
+
+  const safeFields: Record<string, Array<string | number | boolean>> = {};
   config.includePaths.forEach((path) => {
-    const values = getValuesByPath(normalizedRawJson, path)
-      .map(sanitizeValue)
-      .filter((value): value is string | number | boolean => value !== null);
+    const values = getValuesByPath(rawData, path)
+      .map(sanitizePrimitive)
+      .filter((value): value is string | number | boolean => value !== null && value !== undefined);
     if (values.length > 0) {
-      includePaths[path] = Array.from(new Set(values)).slice(0, MAX_INCLUDE_VALUES);
+      safeFields[path] = Array.from(new Set(values)).slice(0, maxItems);
     }
   });
 
+  const flags: string[] = [];
   config.rules.forEach((rule) => {
-    if (evaluateWhen(rule.when, normalizedRawJson)) {
-      flags.push({ id: rule.flag, description: rule.description, severity: rule.severity });
+    if (evaluateWhen(rule.when, rawData, { proposal, counts, recent, flags: [] })) {
+      flags.push(rule.flag);
     }
   });
-
-  const createdAt = createdAtDates.sort((a, b) => a.getTime() - b.getTime())[0];
-  const lastUpdate = updateDates.sort((a, b) => b.getTime() - a.getTime())[0];
-  const lastFailure = failureDates.sort((a, b) => b.getTime() - a.getTime())[0];
-
-  const ageHours = createdAt ? Math.round((Date.now() - createdAt.getTime()) / 36e5) : undefined;
 
   return {
-    statusSummary: statusCounts,
-    flags,
-    counts: {
-      errors: Array.from(errorMap.values()).reduce((acc, entry) => acc + entry.count, 0),
-      integrations: integrations.length,
-    },
-    timestamps: {
-      createdAt: createdAt?.toISOString(),
-      lastUpdate: lastUpdate?.toISOString(),
-      lastFailure: lastFailure?.toISOString(),
-      ageHours,
-    },
-    topErrors: Array.from(errorMap.values()),
-    integrations,
-    includePaths,
+    proposal,
+    counts,
+    recent,
+    flags: Array.from(new Set(flags)).slice(0, maxItems),
+    topErrors,
+    integrationsSummary,
+    safeFields,
   };
 };

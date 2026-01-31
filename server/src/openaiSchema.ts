@@ -30,10 +30,24 @@ export const structuredAnalysisSchema = {
 } as const;
 
 const ajv = new Ajv({ allErrors: true, strict: false });
-const validate: ValidateFunction = ajv.compile(structuredAnalysisSchema);
 
-export const validateStructuredAnalysis = (data: unknown): data is StructuredAnalysis => {
-  return Boolean(validate(data));
+export const buildSchemaValidator = (schema: Record<string, unknown>): ValidateFunction => {
+  return ajv.compile(schema);
 };
 
-export const getStructuredAnalysisErrors = () => validate.errors ?? [];
+const defaultValidator: ValidateFunction = buildSchemaValidator(structuredAnalysisSchema);
+
+export const validateStructuredAnalysis = (data: unknown): data is StructuredAnalysis => {
+  return Boolean(defaultValidator(data));
+};
+
+export const validateStructuredOutput = (
+  schema: Record<string, unknown>,
+  data: unknown,
+): { valid: boolean; errors: NonNullable<ValidateFunction['errors']> } => {
+  const validator = buildSchemaValidator(schema);
+  const valid = Boolean(validator(data));
+  return { valid, errors: validator.errors ?? [] };
+};
+
+export const getStructuredAnalysisErrors = () => defaultValidator.errors ?? [];
