@@ -1,10 +1,12 @@
 # Analisador de Propostas (MVP)
 
-MVP em React + Vite + TypeScript para analisar propostas. A aplicação consulta um backend HTTP, sanitiza dados sensíveis e envia o JSON sanitizado para a OpenAI (Responses API).
+Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows, sanitiza/criptografa dados sensíveis e chama a OpenAI (Responses API).
 
 ## Requisitos
 
-- Node.js 18+ (para Vite e WebCrypto no browser)
+- Windows com ODBC Driver para SQL Server instalado.
+- Node.js 18+.
+- Acesso de rede ao SQL Server `AGSQLCVP02\\Vendas`.
 
 ## Instalação
 
@@ -12,32 +14,34 @@ MVP em React + Vite + TypeScript para analisar propostas. A aplicação consulta
 npm install
 ```
 
-## Configuração de variáveis locais
+## Configuração do backend
 
-Crie um arquivo `.env.local` na raiz do projeto com base em `.env.example`:
+Crie `server/.env` com base em `server/.env.example`:
 
 ```bash
-cp .env.example .env.local
+cp server/.env.example server/.env
 ```
 
-Preencha as chaves necessárias:
+Preencha as variáveis:
 
-- `VITE_OPENAI_API_KEY`: obrigatório para a chamada à OpenAI.
-- `VITE_BACKEND_TOKEN`: opcional (token Bearer enviado ao backend).
-- `VITE_CRYPTO_PASSPHRASE`: recomendado se `privacy.crypto.enabled=true`.
+- `OPENAI_API_KEY`: chave da OpenAI.
+- `OPENAI_CRYPTO_PASSPHRASE`: passphrase usada para derivação da chave AES-256-GCM.
+- `DB_SERVER`: servidor SQL (ex.: `AGSQLCVP02\\Vendas`).
+- `DB_DATABASE`: base (ex.: `PVDB00`).
+- `DB_TRUST_SERVER_CERT`: `true` ou `false`.
 
 ## Configuração do pipeline
 
-Edite `src/config/pipeline.json`:
+Edite `shared/pipeline.json` para definir:
 
-- `backend.baseUrl`: URL do backend.
-- `backend.analysisEndpoint`: endpoint com `{{proposalNumber}}`.
-- `backend.authHeaderTemplate`: template opcional para Authorization (ex.: `Bearer {{token}}`).
-- `privacy.allowList`: paths em dot notation, com arrays usando `[]` (ex.: `errors[].code`).
-- `privacy.crypto.enabled`: habilita criptografia.
-- `privacy.crypto.timeWindow`: `hour` ou `day`.
-- `privacy.crypto.format`: formato do valor criptografado.
-- `openai.*`: prompts e parâmetros da OpenAI.
+- `privacy.allowList`: paths permitidos em texto puro (suporta arrays com `[]`).
+- `privacy.crypto.enabled` e `privacy.crypto.timeWindow`.
+- `openai.model`, `openai.temperature` e prompts.
+
+## Scripts SQL
+
+Copie o conteúdo do arquivo original `Script Analise.sql` para `server/sql/analysis.sql`.
+O script deve utilizar o parâmetro `@codProposta` de forma parametrizada (sem concatenar strings).
 
 ## Executar
 
@@ -45,14 +49,15 @@ Edite `src/config/pipeline.json`:
 npm run dev
 ```
 
-Acesse `http://localhost:5173`.
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:3001`
 
-## Observações de CORS
+## Fluxo
 
-Se o backend bloquear CORS, você pode:
-
-- Configurar CORS no backend.
-- Ou adicionar um proxy no Vite (ver `server.proxy` em `vite.config.ts`).
+1. O frontend chama `GET /api/analyze/:proposalNumber`.
+2. O backend consulta o SQL Server com parâmetro `@codProposta`.
+3. Os dados são normalizados, aplicam allow list e criptografia.
+4. A OpenAI gera a análise.
 
 ## Testes
 

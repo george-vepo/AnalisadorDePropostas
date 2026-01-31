@@ -1,0 +1,20 @@
+{
+  "privacy": {
+    "allowList": [
+      "status",
+      "errors[].code",
+      "integracoes[].status",
+      "integracoes[].erroMensagem"
+    ],
+    "crypto": {
+      "enabled": true,
+      "timeWindow": "hour"
+    }
+  },
+  "openai": {
+    "model": "gpt-4.1-mini",
+    "temperature": 0.2,
+    "systemPrompt": "Você é um analista técnico que resume o estado de propostas e aponta próximos passos.",
+    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda com: (1) resumo, (2) causa provável, (3) evidências, (4) próximos passos, (5) perguntas para confirmar."
+  }
+}
