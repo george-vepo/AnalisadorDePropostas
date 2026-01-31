@@ -11,10 +11,86 @@
       "timeWindow": "hour"
     }
   },
+  "analysis": {
+    "signals": {
+      "enabled": true,
+      "includePaths": [
+        "status",
+        "statusPagamento",
+        "assinatura.status",
+        "pagamento.status",
+        "integracoes[].nome",
+        "integracoes[].status",
+        "errors[].code",
+        "errors[].erroCodigo",
+        "ultimaAtualizacao",
+        "dataCriacao"
+      ],
+      "rules": [
+        {
+          "id": "assinatura-ok-pagamento-pendente",
+          "description": "Assinatura aprovada com pagamento pendente.",
+          "when": {
+            "all": [
+              { "path": "assinatura.status", "equals": "OK" },
+              { "path": "pagamento.status", "equals": "PENDENTE" }
+            ]
+          },
+          "flag": "assinatura_ok_pagamento_pendente",
+          "severity": "P1"
+        },
+        {
+          "id": "integracao-com-erro",
+          "description": "Uma integração retornou erro.",
+          "when": {
+            "any": [
+              { "path": "integracoes[].status", "equals": "ERRO" },
+              { "path": "integracoes[].status", "equals": "FALHA" }
+            ]
+          },
+          "flag": "integracao_em_erro",
+          "severity": "P2"
+        }
+      ]
+    }
+  },
+  "runbooks": {
+    "items": [
+      {
+        "id": "sensibilizacao-falha",
+        "when": {
+          "any": [
+            { "path": "integracoes[].nome", "equals": "SENSIBILIZACAO" },
+            { "path": "integracoes[].status", "equals": "ERRO" }
+          ]
+        },
+        "title": "Falha na sensibilização",
+        "severitySuggestion": "P1",
+        "steps": [
+          "Validar erroCodigo/erroMensagem",
+          "Checar fila/reprocessamento",
+          "Confirmar se houve mudança recente no serviço"
+        ],
+        "links": ["https://runbook-interno/sensibilizacao"]
+      },
+      {
+        "id": "pagamento-pendente",
+        "when": { "any": [{ "path": "statusPagamento", "equals": "PENDENTE" }] },
+        "title": "Pagamento pendente",
+        "severitySuggestion": "P2",
+        "steps": [
+          "Validar status do gateway",
+          "Confirmar tentativa de cobrança",
+          "Checar comunicação com o cliente"
+        ],
+        "links": []
+      }
+    ]
+  },
   "openai": {
     "model": "gpt-4.1-mini",
     "temperature": 0.2,
-    "systemPrompt": "Você é um analista técnico que resume o estado de propostas e aponta próximos passos.",
-    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda com: (1) resumo, (2) causa provável, (3) evidências, (4) próximos passos, (5) perguntas para confirmar."
+    "systemPrompt": "Você é um analista técnico que resume o estado de propostas e aponta próximos passos. Use os sinais (signals) e runbooks como fonte primária. Se encontrar ENC[...], não tente adivinhar conteúdo. Trate ENC[...] como opaco. Se faltarem dados, explique o que falta e liste perguntas. Sempre retorne JSON válido conforme o schema solicitado.",
+    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base no JSON a seguir. Dê mais peso a signals e runbooks do que aos dados criptografados.\\n\\n{{dataJson}}"
   }
 }
