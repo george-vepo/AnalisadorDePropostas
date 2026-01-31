@@ -1,6 +1,6 @@
 # Analisador de Propostas (MVP)
 
-Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows, sanitiza/criptografa dados sensíveis e chama a OpenAI (Responses API).
+Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows e expõe um endpoint JSON para debug.
 
 ## Requisitos
 
@@ -24,19 +24,9 @@ cp server/.env.example server/.env
 
 Preencha as variáveis:
 
-- `OPENAI_API_KEY`: chave da OpenAI.
-- `OPENAI_CRYPTO_PASSPHRASE`: passphrase usada para derivação da chave AES-256-GCM.
 - `DB_SERVER`: servidor SQL (ex.: `AGSQLCVP02\\Vendas`).
 - `DB_DATABASE`: base (ex.: `PVDB00`).
 - `DB_TRUST_SERVER_CERT`: `true` ou `false`.
-
-## Configuração do pipeline
-
-Edite `shared/pipeline.json` para definir:
-
-- `privacy.allowList`: paths permitidos em texto puro (suporta arrays com `[]`).
-- `privacy.crypto.enabled` e `privacy.crypto.timeWindow`.
-- `openai.model`, `openai.temperature` e prompts.
 
 ## Scripts SQL
 
@@ -54,10 +44,9 @@ npm run dev
 
 ## Fluxo
 
-1. O frontend chama `GET /api/analyze/:proposalNumber`.
+1. O frontend chama `GET /api/analysis/:codProposta`.
 2. O backend consulta o SQL Server com parâmetro `@codProposta`.
-3. Os dados são normalizados, aplicam allow list e criptografia.
-4. A OpenAI gera a análise.
+3. O backend retorna os múltiplos resultsets em JSON para debug.
 
 ## Testes
 
