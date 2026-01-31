@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { performance } from 'node:perf_hooks';
-import { fetchRawAnalysisFromDb } from '../analysisData';
+import { fetchAnalysisFromDb } from '../analysisData';
 import { normalize } from '../normalizer';
 import { loadPipelineConfig } from '../pipeline';
 import { analyzeWithOpenAIText } from '../openaiClient';
@@ -40,16 +40,13 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
 
   let analysisData;
   try {
-    analysisData = await fetchRawAnalysisFromDb(codProposta);
+    analysisData = await fetchAnalysisFromDb(codProposta);
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Erro desconhecido ao consultar o banco.';
     return res.status(500).json(buildErrorResponse('Falha ao consultar o banco', details));
   }
 
-  const payload = {
-    codProposta,
-    data: analysisData.data,
-  };
+  const payload = analysisData.data;
 
   const normalized = normalize(payload, pipeline.config.privacy.normalizer);
   const normalizedBytes = toBytes(normalized);
@@ -78,6 +75,8 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
         elapsedMsOpenai: 0,
         setsCount: analysisData.recordsets.length,
         rowsBySet: analysisData.rowsBySet,
+        format: analysisData.format,
+        fallbackUsed: analysisData.fallbackUsed,
         payloadBytesNormalized: normalizedBytes,
         payloadBytesSanitized: sanitizedBytes,
         stats: sanitizedResult.stats,
@@ -120,6 +119,8 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
       elapsedMsOpenai: Math.round(performance.now() - openaiStart),
       setsCount: analysisData.recordsets.length,
       rowsBySet: analysisData.rowsBySet,
+      format: analysisData.format,
+      fallbackUsed: analysisData.fallbackUsed,
       payloadBytesNormalized: normalizedBytes,
       payloadBytesSanitized: sanitizedBytes,
       stats: sanitizedResult.stats,
