@@ -54,10 +54,130 @@
       "keepPaths": []
     }
   },
+  "analysis": {
+    "signals": {
+      "enabled": true,
+      "maxItemsPerArray": 50,
+      "includePaths": [
+        "proposta.STA_SITUACAO",
+        "proposta.STA_ASSINATURA",
+        "proposta.STA_PAGO",
+        "proposta.COD_SISTEMA_ORIGEM",
+        "proposta.COD_CANAL",
+        "pagamento.STA_PAGAMENTO",
+        "adesao.STA_ADESAO",
+        "integracoes[].STA_STATUS",
+        "erros[].COD_ERRO"
+      ],
+      "rules": [
+        {
+          "id": "assinado-sem-pagamento",
+          "description": "Assinatura concluída sem confirmação de pagamento.",
+          "when": {
+            "all": [
+              { "path": "proposta.STA_ASSINATURA", "equals": "OK" },
+              { "path": "proposta.STA_PAGO", "in": ["N", "NAO", "PENDENTE"] }
+            ]
+          },
+          "flag": "ASSINADO_SEM_PAGAMENTO",
+          "severity": "P1"
+        },
+        {
+          "id": "sensibilizacao-com-erro",
+          "description": "Sensibilização com erro registrado.",
+          "when": {
+            "any": [
+              { "path": "proposta.DES_ERRO_SENSIBILIZACAO", "exists": true },
+              { "path": "integracoes[].STA_STATUS", "equals": "ERRO" }
+            ]
+          },
+          "flag": "SENSIBILIZACAO_COM_ERRO",
+          "severity": "P2"
+        }
+      ]
+    }
+  },
+  "runbooks": {
+    "items": [
+      {
+        "id": "runbook-sensibilizacao",
+        "when": {
+          "any": [
+            { "path": "integracoes[].STA_STATUS", "equals": "ERRO" },
+            { "path": "signals.flags[]", "equals": "SENSIBILIZACAO_COM_ERRO" }
+          ]
+        },
+        "title": "Falha na sensibilização",
+        "severitySuggestion": "P1",
+        "steps": [
+          "Verificar fila de sensibilização e logs técnicos.",
+          "Reprocessar integração se necessário.",
+          "Confirmar status da proposta após o reprocessamento."
+        ],
+        "links": ["https://runbook-interno/sensibilizacao"]
+      },
+      {
+        "id": "runbook-pagamento-pendente",
+        "when": {
+          "all": [
+            { "path": "proposta.STA_ASSINATURA", "equals": "OK" },
+            { "path": "proposta.STA_PAGO", "in": ["N", "NAO", "PENDENTE"] }
+          ]
+        },
+        "title": "Pagamento pendente após assinatura",
+        "severitySuggestion": "P2",
+        "steps": [
+          "Validar status de pagamento no gateway.",
+          "Confirmar se houve conciliação financeira.",
+          "Abrir chamado para financeiro se divergência persistir."
+        ],
+        "links": ["https://runbook-interno/pagamentos"]
+      }
+    ]
+  },
   "openai": {
     "model": "gpt-5.2-mini",
     "temperature": 0.2,
-    "systemPrompt": "Você é um analista de sustentação. Dê diagnóstico objetivo e próximos passos.",
-    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda com: (1) resumo, (2) causa provável, (3) evidências, (4) próximos passos, (5) perguntas para confirmar."
+    "systemPrompt": "Você é um analista de sustentação. Dê diagnóstico objetivo e próximos passos. Dê peso maior para signals e runbooks. Campos ENC[...] são opacos; não invente conteúdo. Se faltarem dados, diga o que falta e quais perguntas fazer.",
+    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda estritamente no JSON solicitado.",
+    "outputSchema": {
+      "enabled": true,
+      "name": "support_analysis",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "probable_cause": { "type": "string" },
+          "confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "severity": { "type": "string", "enum": ["P0", "P1", "P2", "P3", "UNKNOWN"] },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "next_steps": { "type": "array", "items": { "type": "string" } },
+          "questions": { "type": "array", "items": { "type": "string" } },
+          "suggested_runbooks": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": [
+          "title",
+          "summary",
+          "probable_cause",
+          "confidence",
+          "severity",
+          "evidence",
+          "next_steps",
+          "questions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "ttlSeconds": 600
+  },
+  "rateLimit": {
+    "enabled": true,
+    "windowSeconds": 300,
+    "maxRequests": 30
   }
 }

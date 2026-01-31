@@ -1,8 +1,8 @@
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const patternToRegex = (pattern: string) => {
-  const escaped = escapeRegex(pattern);
-  const source = `^${escaped.replace(/\\\[\\\]/g, '\\\\[\\\\d+\\\\]')}$`;
+  const parts = pattern.split('[]').map(escapeRegex);
+  const source = `^${parts.join('\\[\\d+\\]')}$`;
   return new RegExp(source);
 };
 
