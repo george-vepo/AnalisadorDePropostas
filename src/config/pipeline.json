@@ -1,0 +1,25 @@
+{
+  "backend": {
+    "baseUrl": "https://backend.exemplo.local",
+    "analysisEndpoint": "/api/propostas/{{proposalNumber}}/analise",
+    "authHeaderTemplate": "Bearer {{token}}"
+  },
+  "privacy": {
+    "allowList": [
+      "status",
+      "errors[].code",
+      "integracoes[].erroMensagem"
+    ],
+    "crypto": {
+      "enabled": true,
+      "timeWindow": "hour",
+      "format": "{{fieldName}}:ENC[v1|{{window}}|{{nonceB64}}|{{cipherB64}}]"
+    }
+  },
+  "openai": {
+    "model": "gpt-4.1-mini",
+    "temperature": 0.2,
+    "systemPrompt": "Você é um analista técnico que resume o estado de propostas e aponta próximos passos.",
+    "userPromptTemplate": "Analise a proposta {{proposalNumber}} e apresente um diagnóstico claro para o time de operações.\n\n{{dataJson}}"
+  }
+}
