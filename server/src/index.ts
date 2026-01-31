@@ -1,7 +1,7 @@
 import express from 'express';
 import './env';
-import { analyzeRouter } from './analyzeRoute';
 import { analysisRouter } from './routes/analysis';
+import { analyzeRouter } from './routes/analyze';
 
 const app = express();
 
