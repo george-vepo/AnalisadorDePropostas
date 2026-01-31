@@ -5,14 +5,18 @@ type Status = {
   message: string;
 };
 
-type AnalysisResponse = {
-  codProposta: string;
-  meta: {
-    setsCount: number;
-    rowsBySet: number[];
-    elapsedMs: number;
+type AnalyzeResponse = {
+  analysisText?: string;
+  sanitizedJson?: Record<string, unknown>;
+  meta?: {
+    elapsedMsTotal?: number;
+    elapsedMsDb?: number;
+    elapsedMsOpenai?: number;
+    setsCount?: number;
+    rowsBySet?: number[];
+    payloadBytesNormalized?: number;
+    payloadBytesSanitized?: number;
   };
-  data: Record<string, unknown>;
 };
 
 type ErrorResponse = {
@@ -26,9 +30,12 @@ const AnalyzeProposalPage = () => {
   const [codProposta, setCodProposta] = useState('');
   const [status, setStatus] = useState<Status>({
     type: 'idle',
-    message: 'Informe o código da proposta para consultar a análise SQL.',
+    message: 'Informe o código da proposta para iniciar a análise.',
   });
-  const [responseJson, setResponseJson] = useState('');
+  const [analysisText, setAnalysisText] = useState('');
+  const [sanitizedJson, setSanitizedJson] = useState('');
+  const [showSanitized, setShowSanitized] = useState(false);
+  const [lastMeta, setLastMeta] = useState<AnalyzeResponse['meta'] | null>(null);
 
   const canAnalyze = codProposta.trim().length > 0 && status.type !== 'loading';
 
@@ -40,13 +47,16 @@ const AnalyzeProposalPage = () => {
       return;
     }
 
-    setStatus({ type: 'loading', message: 'Executando análise no SQL Server...' });
-    setResponseJson('');
+    setStatus({ type: 'loading', message: 'Consultando e analisando proposta...' });
+    setAnalysisText('');
+    setSanitizedJson('');
+    setLastMeta(null);
 
     try {
       const trimmed = codProposta.trim();
-      const response = await fetch(`/api/analysis/${encodeURIComponent(trimmed)}`);
-      const payload = (await response.json()) as AnalysisResponse & ErrorResponse;
+      const modeQuery = showSanitized ? '?mode=sanitized' : '';
+      const response = await fetch(`/api/analyze/${encodeURIComponent(trimmed)}${modeQuery}`);
+      const payload = (await response.json()) as AnalyzeResponse & ErrorResponse;
 
       if (!response.ok) {
         const message = payload.error?.message ?? 'Erro ao executar análise.';
@@ -54,12 +64,25 @@ const AnalyzeProposalPage = () => {
         throw new Error(`${message}${details}`);
       }
 
-      setResponseJson(JSON.stringify(payload, null, 2));
-      setStatus({ type: 'success', message: 'Análise concluída com sucesso.' });
+      if (showSanitized) {
+        setSanitizedJson(JSON.stringify(payload.sanitizedJson ?? payload, null, 2));
+        setStatus({ type: 'success', message: 'JSON sanitizado pronto para inspeção.' });
+      } else {
+        setAnalysisText(payload.analysisText ?? 'Sem resposta disponível.');
+        setStatus({ type: 'success', message: 'Análise concluída com sucesso.' });
+      }
+
+      setLastMeta(payload.meta ?? null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro inesperado ao executar análise.';
       setStatus({ type: 'error', message });
     }
+  };
+
+  const handleCopy = async () => {
+    if (!analysisText) return;
+    await navigator.clipboard.writeText(analysisText);
+    setStatus({ type: 'success', message: 'Análise copiada para a área de transferência.' });
   };
 
   const statusClass = useMemo(() => {
@@ -84,18 +107,59 @@ const AnalyzeProposalPage = () => {
         />
         <div className="actions">
           <button type="submit" disabled={!canAnalyze}>
-            {status.type === 'loading' ? 'Buscando...' : 'Buscar análise (debug)'}
+            {status.type === 'loading' ? 'Analisando...' : 'Analisar'}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setShowSanitized((prev) => !prev)}
+          >
+            {showSanitized ? 'Ver análise' : 'Ver JSON sanitizado'}
           </button>
         </div>
-        <small>O retorno é exibido em JSON apenas para fins de debug.</small>
+        <small>
+          {showSanitized
+            ? 'Modo debug: retorna apenas JSON sanitizado, sem chamada à OpenAI.'
+            : 'A análise usa OpenAI e dados sanitizados.'}
+        </small>
       </form>
 
       <div className={statusClass}>{status.message}</div>
 
-      {responseJson && (
-        <section>
-          <h2>Resposta</h2>
-          <pre className="output">{responseJson}</pre>
+      {(analysisText || sanitizedJson) && (
+        <section className="result">
+          <div className="analysis-header">
+            <div>
+              <h2>{showSanitized ? 'JSON sanitizado' : 'Análise'}</h2>
+              <p className="analysis-subtitle">
+                {showSanitized
+                  ? 'Uso interno para validação de privacidade.'
+                  : 'Resumo gerado automaticamente pela OpenAI.'}
+              </p>
+            </div>
+            {!showSanitized && (
+              <div className="analysis-actions">
+                <button type="button" className="secondary" onClick={handleCopy}>
+                  Copiar análise
+                </button>
+              </div>
+            )}
+          </div>
+
+          <pre className="output">{showSanitized ? sanitizedJson : analysisText}</pre>
+
+          {lastMeta && (
+            <div className="analysis-meta">
+              <span className="badge">
+                {lastMeta.elapsedMsTotal ? `${lastMeta.elapsedMsTotal} ms` : 'Tempo indisponível'}
+              </span>
+              <small>
+                {lastMeta.payloadBytesSanitized
+                  ? `Payload sanitizado: ${lastMeta.payloadBytesSanitized} bytes`
+                  : 'Payload sanitizado indisponível'}
+              </small>
+            </div>
+          )}
         </section>
       )}
     </main>

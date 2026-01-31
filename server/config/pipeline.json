@@ -1,0 +1,32 @@
+{
+  "privacy": {
+    "allowList": [
+      "data.set0[].STA_SITUACAO",
+      "data.set0[].STA_ASSINATURA",
+      "data.set0[].STA_PAGO",
+      "data.set0[].DTA_CADASTRO",
+      "data.set0[].DTA_ASSINATURA",
+      "data.set0[].DES_ERRO_SENSIBILIZACAO",
+      "data.set1[].COD_ERRO",
+      "data.set1[].DES_ERRO"
+    ],
+    "crypto": {
+      "enabled": true,
+      "timeWindow": "hour",
+      "format": "{{field}}:ENC[v1|{{window}}|{{nonceB64}}|{{cipherB64}}]"
+    },
+    "normalizer": {
+      "maxDepth": 10,
+      "maxArrayItems": 30,
+      "maxStringLength": 800,
+      "dropPaths": ["data.setX[].payload", "data.setX[].headers"],
+      "keepPaths": []
+    }
+  },
+  "openai": {
+    "model": "gpt-5.2-mini",
+    "temperature": 0.2,
+    "systemPrompt": "Você é um analista de sustentação. Dê diagnóstico objetivo e próximos passos.",
+    "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda com: (1) resumo, (2) causa provável, (3) evidências, (4) próximos passos, (5) perguntas para confirmar."
+  }
+}

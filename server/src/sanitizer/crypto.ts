@@ -1,8 +1,9 @@
-import { createCipheriv, randomBytes, scryptSync } from 'node:crypto';
+import { createCipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
 
 export type CryptoConfig = {
   enabled: boolean;
   timeWindow: 'hour' | 'day';
+  format: string;
 };
 
 const formatWindow = (date: Date, timeWindow: CryptoConfig['timeWindow']) => {
@@ -37,7 +38,7 @@ export const createEncryptor = (config: CryptoConfig, passphrase: string): Encry
     throw new Error('OPENAI_CRYPTO_PASSPHRASE não configurada.');
   }
 
-  const key = scryptSync(passphrase, window, 32);
+  const key = pbkdf2Sync(passphrase, window, 200_000, 32, 'sha256');
 
   return {
     window,
@@ -47,7 +48,11 @@ export const createEncryptor = (config: CryptoConfig, passphrase: string): Encry
       const cipherText = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
       const tag = cipher.getAuthTag();
       const payload = Buffer.concat([cipherText, tag]).toString('base64');
-      return `${fieldName}:ENC[v1|${window}|${nonce.toString('base64')}|${payload}]`;
+      return config.format
+        .replaceAll('{{field}}', fieldName)
+        .replaceAll('{{window}}', window)
+        .replaceAll('{{nonceB64}}', nonce.toString('base64'))
+        .replaceAll('{{cipherB64}}', payload);
     },
   };
 };

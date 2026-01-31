@@ -36,6 +36,53 @@ const extractOutputText = (payload: any): string => {
   return '';
 };
 
+export const analyzeWithOpenAIText = async (
+  proposalNumber: string,
+  sanitizedPayload: unknown,
+  config: OpenAIConfig,
+  apiKey: string,
+): Promise<{ text: string; raw: unknown }> => {
+  const dataJson = JSON.stringify(sanitizedPayload, null, 2);
+  const userPrompt = renderTemplate(config.userPromptTemplate, {
+    proposalNumber,
+    dataJson,
+  });
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: config.temperature,
+      input: [
+        { role: 'system', content: config.systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI error: ${response.status} ${errorBody}`);
+  }
+
+  const apiPayload = await response.json();
+
+  if (apiPayload.error) {
+    throw new Error(apiPayload.error.message ?? 'Erro retornado pela OpenAI.');
+  }
+
+  const text = extractOutputText(apiPayload).trim();
+  if (text) {
+    return { text, raw: apiPayload };
+  }
+
+  return { text: JSON.stringify(apiPayload), raw: apiPayload };
+};
+
 const extractJsonOutput = (payload: any): unknown | null => {
   if (!Array.isArray(payload.output)) return null;
 
