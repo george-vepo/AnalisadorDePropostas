@@ -16,6 +16,8 @@ type AnalyzeResponse = {
     rowsBySet?: number[];
     payloadBytesNormalized?: number;
     payloadBytesSanitized?: number;
+    format?: 'json' | 'recordsets';
+    fallbackUsed?: boolean;
   };
 };
 
@@ -153,6 +155,16 @@ const AnalyzeProposalPage = () => {
               <span className="badge">
                 {lastMeta.elapsedMsTotal ? `${lastMeta.elapsedMsTotal} ms` : 'Tempo indisponível'}
               </span>
+              <span className="badge">
+                {lastMeta.format ? `Formato: ${lastMeta.format}` : 'Formato indisponível'}
+              </span>
+              <small>
+                {lastMeta.fallbackUsed === undefined
+                  ? 'Fallback indisponível'
+                  : lastMeta.fallbackUsed
+                    ? 'Fallback: script legado usado'
+                    : 'Fallback: SQL JSON usado'}
+              </small>
               <small>
                 {lastMeta.payloadBytesSanitized
                   ? `Payload sanitizado: ${lastMeta.payloadBytesSanitized} bytes`

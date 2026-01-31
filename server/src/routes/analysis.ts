@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { fetchRawAnalysisFromDb } from '../analysisData';
+import { fetchAnalysisFromDb } from '../analysisData';
 
 const MAX_COD_PROPOSTA_LENGTH = 50;
 
@@ -20,13 +20,15 @@ analysisRouter.get('/analysis/:codProposta', async (req, res) => {
   }
 
   try {
-    const result = await fetchRawAnalysisFromDb(codProposta);
+    const result = await fetchAnalysisFromDb(codProposta);
     return res.json({
       codProposta,
       meta: {
         setsCount: result.recordsets.length,
         rowsBySet: result.rowsBySet,
         elapsedMs: result.elapsedMs,
+        format: result.format,
+        fallbackUsed: result.fallbackUsed,
       },
       data: result.data,
     });
