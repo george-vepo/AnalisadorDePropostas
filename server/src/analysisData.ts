@@ -19,6 +19,50 @@ export type AnalysisDataResult = {
   fallbackUsed: boolean;
 };
 
+export class SqlTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SqlTimeoutError';
+  }
+}
+
+const isTimeoutError = (error: unknown) => {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  const code = (error as { code?: string })?.code ?? '';
+  return code === 'ETIMEOUT' || message.includes('timeout');
+};
+
+const isTransientError = (error: unknown) => {
+  const code = (error as { code?: string })?.code ?? '';
+  return ['ECONNRESET', 'ENETRESET', 'EPIPE', 'ESOCKET', 'ETIMEDOUT'].includes(code);
+};
+
+const executeQueryWithRetry = async (
+  sqlText: string,
+  codProposta: string,
+  pool: Awaited<ReturnType<typeof getPool>>,
+) => {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const request = pool.request();
+      request.input('codProposta', sql.VarChar(50), codProposta);
+      const result = await request.query(sqlText);
+      return (result.recordsets ?? []) as Array<Array<Record<string, unknown>>>;
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        throw new SqlTimeoutError('Timeout no SQL');
+      }
+      if (attempt < maxAttempts && isTransientError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+  return [];
+};
+
 const toRecordsetData = (recordsets: Array<Array<Record<string, unknown>>>) =>
   recordsets.reduce<Record<string, unknown>>((acc, set, index) => {
     acc[`set${index}`] = set;
@@ -49,11 +93,7 @@ const extractJsonData = (recordsets: Array<Array<Record<string, unknown>>>) => {
 };
 
 const executeRecordsetsQuery = async (codProposta: string, pool: Awaited<ReturnType<typeof getPool>>) => {
-  const request = pool.request();
-  request.input('codProposta', sql.VarChar(50), codProposta);
-  const result = await request.query(analysisSql);
-  const recordsets = (result.recordsets ?? []) as Array<Array<Record<string, unknown>>>;
-  return recordsets;
+  return executeQueryWithRetry(analysisSql, codProposta, pool);
 };
 
 export const fetchAnalysisFromDb = async (codProposta: string): Promise<AnalysisDataResult> => {
@@ -61,10 +101,7 @@ export const fetchAnalysisFromDb = async (codProposta: string): Promise<Analysis
   const pool = await getPool();
 
   try {
-    const request = pool.request();
-    request.input('codProposta', sql.VarChar(50), codProposta);
-    const result = await request.query(analysisJsonSql);
-    const recordsets = (result.recordsets ?? []) as Array<Array<Record<string, unknown>>>;
+    const recordsets = await executeQueryWithRetry(analysisJsonSql, codProposta, pool);
     const data = extractJsonData(recordsets);
     const elapsedMs = Math.round(performance.now() - startedAt);
 
@@ -77,6 +114,9 @@ export const fetchAnalysisFromDb = async (codProposta: string): Promise<Analysis
       fallbackUsed: false,
     };
   } catch (error) {
+    if (error instanceof SqlTimeoutError) {
+      throw error;
+    }
     const recordsets = await executeRecordsetsQuery(codProposta, pool);
     const elapsedMs = Math.round(performance.now() - startedAt);
 

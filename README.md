@@ -31,6 +31,12 @@ Preencha as variáveis:
 - `OPENAI_CRYPTO_PASSPHRASE`: passphrase para criptografia dos campos fora da allow list.
 - `DEV_ALLOW_RAW`: `true` para permitir respostas sem sanitização (opcional).
 - `DEBUG_RETURN_SANITIZED`: `true` para incluir JSON sanitizado na resposta (opcional).
+- `DEBUG_LOG_PAYLOAD`: `true` para logar payload sanitizado (redacted, opcional).
+- `DEV_ALLOW_DIAG_OPENAI`: `true` para habilitar `/api/diag/openai` (opcional).
+- `MAX_OPENAI_INPUT_BYTES`: limite de bytes antes de reduzir payload (default 150000).
+- `OPENAI_TIMEOUT_MS`: timeout da OpenAI em ms (default 30000).
+- `DB_REQUEST_TIMEOUT_MS`: timeout por query SQL em ms (default 30000).
+- `DB_CONNECTION_TIMEOUT_MS`: timeout de conexão SQL em ms (default 10000).
 
 ## Scripts SQL
 
@@ -58,6 +64,24 @@ npm run dev
 - `GET /api/analysis/:codProposta`: retorno bruto dos dados do SQL (debug).
 - `GET /api/analyze/:codProposta`: pipeline completo com OpenAI.
 - `GET /api/analyze/:codProposta?mode=sanitized`: retorna JSON sanitizado sem chamar a OpenAI.
+- `GET /api/analyze/:codProposta?mode=dry-run`: executa SQL + sanitização sem OpenAI.
+- `GET /api/config/validate`: valida `server/config/pipeline.json`.
+- `GET /api/health`: healthcheck básico do backend.
+- `GET /api/diag/db`: diagnóstico de conexão com SQL Server.
+- `GET /api/diag/openai`: diagnóstico de OpenAI (requer `DEV_ALLOW_DIAG_OPENAI=true`).
+
+## Checklist de depuração rápida
+
+1. Validar config:
+   - `GET /api/config/validate`
+2. Testar conexão com SQL:
+   - `GET /api/diag/db`
+3. Rodar dry-run do pipeline:
+   - `GET /api/analyze/:codProposta?mode=dry-run`
+4. Ajustar timeouts/limites:
+   - `MAX_OPENAI_INPUT_BYTES`
+   - `DB_REQUEST_TIMEOUT_MS`
+   - `OPENAI_TIMEOUT_MS`
 
 ## Testes
 

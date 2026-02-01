@@ -22,6 +22,14 @@ type AnalyzeResponse = {
   structured?: StructuredAnalysis;
   ticketMarkdown?: string;
   sanitizedJson?: Record<string, unknown>;
+  sanitizedPreview?: Record<string, unknown>;
+  signals?: Record<string, unknown>;
+  runbooksMatched?: Array<{ id: string; title: string; severitySuggestion?: string }>;
+  debug?: {
+    sanitizedPreview?: Record<string, unknown>;
+    signals?: Record<string, unknown>;
+    runbooksMatched?: Array<{ id: string; title: string; severitySuggestion?: string }>;
+  };
   meta?: {
     elapsedMsTotal?: number;
     elapsedMsDb?: number;
@@ -32,6 +40,8 @@ type AnalyzeResponse = {
     payloadBytesSanitized?: number;
     format?: 'json' | 'recordsets';
     fallbackUsed?: boolean;
+    openaiUsed?: boolean;
+    openaiError?: string;
   };
 };
 
@@ -72,6 +82,7 @@ const buildTicketMarkdown = (structured: StructuredAnalysis) => {
 const AnalyzeProposalPage = () => {
   const [codProposta, setCodProposta] = useState('');
   const [mode, setMode] = useState<'analysis' | 'sanitized' | 'ticket'>('analysis');
+  const [dryRun, setDryRun] = useState(false);
   const [status, setStatus] = useState<Status>({
     type: 'idle',
     message: 'Informe o código da proposta para iniciar a análise.',
@@ -80,6 +91,9 @@ const AnalyzeProposalPage = () => {
   const [structured, setStructured] = useState<StructuredAnalysis | null>(null);
   const [ticketMarkdown, setTicketMarkdown] = useState('');
   const [sanitizedJson, setSanitizedJson] = useState('');
+  const [signalsJson, setSignalsJson] = useState('');
+  const [runbooksJson, setRunbooksJson] = useState('');
+  const [sanitizedPreviewJson, setSanitizedPreviewJson] = useState('');
   const [lastMeta, setLastMeta] = useState<AnalyzeResponse['meta'] | null>(null);
   const [lastPayload, setLastPayload] = useState('');
 
@@ -98,12 +112,16 @@ const AnalyzeProposalPage = () => {
     setStructured(null);
     setTicketMarkdown('');
     setSanitizedJson('');
+    setSignalsJson('');
+    setRunbooksJson('');
+    setSanitizedPreviewJson('');
     setLastMeta(null);
     setLastPayload('');
 
     try {
       const trimmed = codProposta.trim();
-      const modeQuery = mode === 'analysis' ? '' : `?mode=${mode}`;
+      const finalMode = dryRun ? 'dry-run' : mode;
+      const modeQuery = finalMode === 'analysis' ? '' : `?mode=${finalMode}`;
       const response = await fetch(`/api/analyze/${encodeURIComponent(trimmed)}${modeQuery}`);
       const payload = (await response.json()) as AnalyzeResponse & ErrorResponse;
 
@@ -115,7 +133,17 @@ const AnalyzeProposalPage = () => {
 
       setLastPayload(JSON.stringify(payload, null, 2));
 
-      if (mode === 'sanitized') {
+      const debugSignals = payload.signals ?? payload.debug?.signals;
+      const debugRunbooks = payload.runbooksMatched ?? payload.debug?.runbooksMatched;
+      const debugPreview = payload.sanitizedPreview ?? payload.debug?.sanitizedPreview;
+
+      if (debugSignals) setSignalsJson(JSON.stringify(debugSignals, null, 2));
+      if (debugRunbooks) setRunbooksJson(JSON.stringify(debugRunbooks, null, 2));
+      if (debugPreview) setSanitizedPreviewJson(JSON.stringify(debugPreview, null, 2));
+
+      if (finalMode === 'dry-run') {
+        setStatus({ type: 'success', message: 'Dry-run concluído (sem OpenAI).' });
+      } else if (mode === 'sanitized') {
         setSanitizedJson(JSON.stringify(payload.sanitizedJson ?? payload, null, 2));
         setStatus({ type: 'success', message: 'JSON sanitizado pronto para inspeção.' });
       } else if (mode === 'ticket') {
@@ -147,10 +175,27 @@ const AnalyzeProposalPage = () => {
     setStatus({ type: 'success', message: 'Resumo do ticket copiado para a área de transferência.' });
   };
 
+  const handleCopyStructured = async () => {
+    if (!structured) return;
+    await navigator.clipboard.writeText(JSON.stringify(structured, null, 2));
+    setStatus({ type: 'success', message: 'JSON estruturado copiado para a área de transferência.' });
+  };
+
+  const handleCopySignals = async () => {
+    if (!signalsJson) return;
+    await navigator.clipboard.writeText(signalsJson);
+    setStatus({ type: 'success', message: 'Signals copiados para a área de transferência.' });
+  };
+
   const handleCopyJson = async () => {
     if (!lastPayload) return;
     await navigator.clipboard.writeText(lastPayload);
     setStatus({ type: 'success', message: 'JSON completo copiado para a área de transferência.' });
+  };
+
+  const truncateJson = (value: string, maxChars = 5000) => {
+    if (value.length <= maxChars) return value;
+    return `${value.slice(0, maxChars)}\n... (truncado)`;
   };
 
   const statusClass = useMemo(() => {
@@ -164,8 +209,8 @@ const AnalyzeProposalPage = () => {
     return `badge ${structured.severity.toLowerCase()}`;
   }, [structured]);
 
-  const shouldShowStructured = mode !== 'sanitized' && structured;
-  const shouldShowTicket = mode === 'ticket' && ticketMarkdown;
+  const shouldShowStructured = mode !== 'sanitized' && structured && !dryRun;
+  const shouldShowTicket = mode === 'ticket' && ticketMarkdown && !dryRun;
 
   return (
     <main>
@@ -182,24 +227,45 @@ const AnalyzeProposalPage = () => {
           placeholder="Ex.: 9063046000890-1"
         />
         <label htmlFor="mode">Modo</label>
-        <select id="mode" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
+        <select
+          id="mode"
+          value={mode}
+          onChange={(event) => setMode(event.target.value as typeof mode)}
+          disabled={dryRun}
+        >
           <option value="analysis">Análise (estruturada)</option>
           <option value="ticket">Ticket (Markdown)</option>
           <option value="sanitized">JSON sanitizado</option>
         </select>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={dryRun}
+            onChange={(event) => setDryRun(event.target.checked)}
+          />
+          Dry-run (sem OpenAI)
+        </label>
         <div className="actions">
           <button type="submit" disabled={!canAnalyze}>
             {status.type === 'loading' ? 'Analisando...' : 'Analisar'}
           </button>
           <button type="button" className="secondary" onClick={handleCopyTicket}>
-            Copiar resumo pro ticket
+            Copiar ticket
+          </button>
+          <button type="button" className="secondary" onClick={handleCopyStructured}>
+            Copiar JSON estruturado
+          </button>
+          <button type="button" className="secondary" onClick={handleCopySignals}>
+            Copiar signals
           </button>
           <button type="button" className="secondary" onClick={handleCopyJson}>
             Copiar JSON completo
           </button>
         </div>
         <small>
-          {mode === 'sanitized'
+          {dryRun
+            ? 'Dry-run executa SQL, normalização e sanitização sem chamar a OpenAI.'
+            : mode === 'sanitized'
             ? 'Modo debug: retorna apenas JSON sanitizado, sem chamada à OpenAI.'
             : mode === 'ticket'
               ? 'Gera Markdown pronto para colar no ticket.'
@@ -214,14 +280,18 @@ const AnalyzeProposalPage = () => {
           <div className="analysis-header">
             <div>
               <h2>
-                {mode === 'sanitized'
+                {dryRun
+                  ? 'Dry-run'
+                  : mode === 'sanitized'
                   ? 'JSON sanitizado'
                   : mode === 'ticket'
                     ? 'Ticket gerado'
                     : 'Análise'}
               </h2>
               <p className="analysis-subtitle">
-                {mode === 'sanitized'
+                {dryRun
+                  ? 'Prévia sanitizada para depuração rápida.'
+                  : mode === 'sanitized'
                   ? 'Uso interno para validação de privacidade.'
                   : mode === 'ticket'
                     ? 'Markdown pronto para colagem no atendimento.'
@@ -237,6 +307,10 @@ const AnalyzeProposalPage = () => {
           </div>
 
           {mode === 'sanitized' && <pre className="output">{sanitizedJson}</pre>}
+
+          {dryRun && sanitizedPreviewJson && (
+            <pre className="output">{truncateJson(sanitizedPreviewJson)}</pre>
+          )}
 
           {shouldShowTicket && <pre className="output">{ticketMarkdown}</pre>}
 
@@ -307,11 +381,42 @@ const AnalyzeProposalPage = () => {
                     : 'Fallback: SQL JSON usado'}
               </small>
               <small>
+                {lastMeta.openaiUsed === undefined
+                  ? 'OpenAI: status indisponível'
+                  : lastMeta.openaiUsed
+                    ? 'OpenAI utilizada'
+                    : `OpenAI não usada${lastMeta.openaiError ? ` (${lastMeta.openaiError})` : ''}`}
+              </small>
+              <small>
                 {lastMeta.payloadBytesSanitized
                   ? `Payload sanitizado: ${lastMeta.payloadBytesSanitized} bytes`
                   : 'Payload sanitizado indisponível'}
               </small>
             </div>
+          )}
+
+          {(signalsJson || runbooksJson || sanitizedPreviewJson) && (
+            <details className="debug-panel">
+              <summary>Debug</summary>
+              <div className="debug-content">
+                <div>
+                  <h4>Meta</h4>
+                  <pre className="output">{truncateJson(JSON.stringify(lastMeta ?? {}, null, 2), 2000)}</pre>
+                </div>
+                <div>
+                  <h4>Signals</h4>
+                  <pre className="output">{truncateJson(signalsJson || '{}')}</pre>
+                </div>
+                <div>
+                  <h4>Runbooks</h4>
+                  <pre className="output">{truncateJson(runbooksJson || '[]')}</pre>
+                </div>
+                <div>
+                  <h4>Sanitized preview</h4>
+                  <pre className="output">{truncateJson(sanitizedPreviewJson || '{}')}</pre>
+                </div>
+              </div>
+            </details>
           )}
         </section>
       )}

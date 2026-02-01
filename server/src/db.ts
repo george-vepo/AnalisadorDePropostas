@@ -8,10 +8,14 @@ if (!dbServer || !dbDatabase) {
 }
 
 const trustServerCertificate = (process.env.DB_TRUST_SERVER_CERT ?? 'false') === 'true';
+const requestTimeout = Number(process.env.DB_REQUEST_TIMEOUT_MS ?? 30000);
+const connectionTimeout = Number(process.env.DB_CONNECTION_TIMEOUT_MS ?? 10000);
 
 const config: sql.config = {
   server: dbServer,
   database: dbDatabase,
+  connectionTimeout,
+  requestTimeout,
   options: {
     trustedConnection: true,
     trustServerCertificate,

@@ -39,6 +39,19 @@ label {
   font-weight: 600;
 }
 
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+}
+
 input[type="text"] {
   width: 100%;
   padding: 12px 14px;
@@ -139,6 +152,23 @@ small {
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+}
+
+.debug-panel {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 16px;
+}
+
+.debug-panel summary {
+  font-weight: 600;
+  cursor: pointer;
+  color: #1e293b;
+}
+
+.debug-content {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
 }
 
 .structured {
