@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { fetchAnalysisFromDb, SqlTimeoutError } from '../analysisData';
 import { getConfig } from '../config/loadConfig';
 import { normalize } from '../normalizer';
-import { analyzeWithOpenAI } from '../openaiClient';
+import { analyzeWithOpenAI, analyzeWithOpenAIText } from '../openaiClient';
 import { buildFallbackAnalysisText } from '../fallback';
 import { applyPayloadBudget } from '../payloadBudget';
 import { redactSensitive } from '../redaction';
@@ -367,11 +367,13 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
 
   const apiKey = process.env.OPENAI_API_KEY;
   let openaiResult = { structured: undefined, rawText: undefined, refusal: undefined, error: undefined };
+  let openaiText: string | undefined;
   let openaiUsed = false;
   let openaiError: string | undefined;
   let elapsedMsOpenai = 0;
   let payloadBytesForModel = 0;
   let payloadAdjusted = false;
+  const useStructuredOutput = configResult.config.openai.outputSchema?.enabled ?? false;
 
   if (!apiKey) {
     openaiError = 'OPENAI_API_KEY não configurada.';
@@ -404,17 +406,32 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
       try {
         openaiUsed = true;
         const openaiStart = performance.now();
-        openaiResult = await analyzeWithOpenAI(
-          codProposta,
-          payloadForModelAdjusted,
-          configResult.config.openai,
-          apiKey,
-          {
-            timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 30000),
-            maxRetries: 1,
-            retryBackoffMs: 500,
-          },
-        );
+        if (useStructuredOutput) {
+          openaiResult = await analyzeWithOpenAI(
+            codProposta,
+            payloadForModelAdjusted,
+            configResult.config.openai,
+            apiKey,
+            {
+              timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 30000),
+              maxRetries: 1,
+              retryBackoffMs: 500,
+            },
+          );
+        } else {
+          const textResult = await analyzeWithOpenAIText(
+            codProposta,
+            payloadForModelAdjusted,
+            configResult.config.openai,
+            apiKey,
+            {
+              timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 30000),
+              maxRetries: 1,
+              retryBackoffMs: 500,
+            },
+          );
+          openaiText = textResult.text;
+        }
         elapsedMsOpenai = Math.round(performance.now() - openaiStart);
         stageTimings.openai = elapsedMsOpenai;
         logStage('openai', elapsedMsOpenai);
@@ -472,6 +489,48 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
         },
       };
     }
+  } else if (openaiText) {
+    responseBody =
+      mode === 'ticket'
+        ? {
+            ticketMarkdown: openaiText,
+            structured: null,
+            meta: {
+              elapsedMsTotal: Math.round(performance.now() - startedAt),
+              elapsedMsDb: analysisData.elapsedMs,
+              elapsedMsOpenai,
+              setsCount: analysisData.recordsets.length,
+              rowsBySet: analysisData.rowsBySet,
+              format: analysisData.format,
+              fallbackUsed: analysisData.fallbackUsed,
+              payloadBytesNormalized: normalizedBytes,
+              payloadBytesSanitized: sanitizedBytes,
+              stats: sanitizedResult.stats,
+              openaiUsed,
+              openaiError,
+              payloadBytesForModel,
+              payloadAdjusted,
+            },
+          }
+        : {
+            analysisText: openaiText,
+            meta: {
+              elapsedMsTotal: Math.round(performance.now() - startedAt),
+              elapsedMsDb: analysisData.elapsedMs,
+              elapsedMsOpenai,
+              setsCount: analysisData.recordsets.length,
+              rowsBySet: analysisData.rowsBySet,
+              format: analysisData.format,
+              fallbackUsed: analysisData.fallbackUsed,
+              payloadBytesNormalized: normalizedBytes,
+              payloadBytesSanitized: sanitizedBytes,
+              stats: sanitizedResult.stats,
+              openaiUsed,
+              openaiError,
+              payloadBytesForModel,
+              payloadAdjusted,
+            },
+          };
   } else {
     const fallbackText = buildFallbackAnalysisText(signals, runbooksMatched);
     responseBody =
