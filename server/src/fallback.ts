@@ -13,7 +13,7 @@ export const buildFallbackAnalysisText = (
     signals.proposal.statusPago ? `STA_PAGO=${signals.proposal.statusPago}` : null,
   ].filter(Boolean);
 
-  lines.push('Resumo');
+  lines.push('1) Resumo');
   lines.push(resumoParts.join(' | ') || 'Sem dados suficientes para resumo.');
   lines.push('');
 
@@ -31,13 +31,13 @@ export const buildFallbackAnalysisText = (
     hypotheses.push('Dados insuficientes para causa provável; validar status e integrações.');
   }
 
-  lines.push('Causa provável');
+  lines.push('2) Causa provável');
   hypotheses.slice(0, 3).forEach((item, index) => {
     lines.push(`${index + 1}. ${item}`);
   });
   lines.push('');
 
-  lines.push('Evidências');
+  lines.push('3) Evidências');
   const evidence: string[] = [];
   if (signals.proposal.statusSituacao) {
     evidence.push(`proposta.STA_SITUACAO=${signals.proposal.statusSituacao}`);
@@ -70,7 +70,7 @@ export const buildFallbackAnalysisText = (
   evidence.forEach((item) => lines.push(`- ${item}`));
   lines.push('');
 
-  lines.push('Próximos passos');
+  lines.push('4) Próximos passos');
   const nextSteps: string[] = [];
   if (runbooksMatched.length > 0) {
     runbooksMatched.slice(0, 3).forEach((runbook) => {
@@ -89,7 +89,7 @@ export const buildFallbackAnalysisText = (
   nextSteps.slice(0, 5).forEach((item) => lines.push(`- ${item}`));
   lines.push('');
 
-  lines.push('Perguntas');
+  lines.push('5) Perguntas para confirmar');
   const questions: string[] = [];
   if (!signals.proposal.statusSituacao) {
     questions.push('Qual o valor de proposta.STA_SITUACAO no momento da análise?');
