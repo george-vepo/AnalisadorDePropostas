@@ -138,7 +138,7 @@
   "openai": {
     "model": "gpt-5.2-mini",
     "temperature": 0.2,
-    "systemPrompt": "Você é um analista de sustentação. Dê diagnóstico objetivo e próximos passos. Dê peso maior para signals e runbooks. Campos ENC[...] são opacos; não invente conteúdo. Se faltarem dados, diga o que falta e quais perguntas fazer.",
+    "systemPrompt": "Você é um analista de sustentação (nível SRE/Support). Seja direto e prático. Não invente fatos: use apenas o que estiver nos dados fornecidos. Campos no formato ENC[...] são opacos; não tente descriptografar nem inferir PII. Use nomes de tabelas/objetos e IDs técnicos como evidência quando existirem (ex.: campo/coluna, códigos de erro, status, traceId/requestId). Se faltarem dados para confirmar uma hipótese, diga o que está faltando e quais perguntas fazer. Formato obrigatório do conteúdo (mapear para os campos do JSON): Resumo (1–3 linhas), Causa provável com 1–3 hipóteses em ordem de chance (use lista numerada no campo probable_cause), Evidências (array com bullets citando campos/tabelas/valores), Próximos passos (array de ações concretas), Perguntas para confirmar (array, máximo 5). Dê peso maior para signals e runbooks.",
     "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos):\n\n{{dataJson}}\n\nResponda estritamente no JSON solicitado.",
     "outputSchema": {
       "enabled": true,
