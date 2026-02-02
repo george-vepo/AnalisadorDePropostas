@@ -1,6 +1,6 @@
 # Analisador de Propostas (MVP)
 
-Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows e expõe endpoints de debug/diagnóstico.
+Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows e retorna um texto de análise gerado pela OpenAI.
 
 ## Requisitos
 
@@ -84,10 +84,6 @@ Preencha as variáveis:
 - `DB_TRUST_SERVER_CERT`: `true` ou `false` (se não estiver definido na connection string).
 - `OPENAI_API_KEY`: chave de API da OpenAI.
 - `OPENAI_CRYPTO_PASSPHRASE`: passphrase para criptografia dos campos fora da allow list (ex.: `cvp-local-dev-2026-02-02:um-segredo-bem-grande`).
-- `DEV_ALLOW_RAW`: `true` para permitir respostas sem sanitização (opcional).
-- `DEBUG_RETURN_SANITIZED`: `true` para incluir JSON sanitizado na resposta (opcional).
-- `DEBUG_LOG_PAYLOAD`: `true` para logar payload sanitizado (redacted, opcional).
-- `DEV_ALLOW_DIAG_OPENAI`: `true` para habilitar `/api/diag/openai` (opcional).
 - `MAX_OPENAI_INPUT_BYTES`: limite de bytes antes de reduzir payload (default 150000).
 - `OPENAI_TIMEOUT_MS`: timeout da OpenAI em ms (default 30000).
 - `DB_REQUEST_TIMEOUT_MS`: timeout por query SQL em ms (default 30000).
@@ -141,50 +137,15 @@ npm run dev
 
 ## Endpoints
 
-- `GET /api/analysis/:codProposta`: retorno bruto dos dados do SQL (debug).
 - `GET /api/analyze/:codProposta`: pipeline completo com OpenAI.
-- `GET /api/analyze/:codProposta?mode=sanitized`: retorna JSON sanitizado sem chamar a OpenAI.
-- `GET /api/analyze/:codProposta?mode=dry-run`: executa SQL + sanitização sem OpenAI.
-- `GET /api/config/validate`: valida `server/config/pipeline.json`.
 - `GET /api/health`: healthcheck básico do backend.
-- `GET /api/diag/db`: diagnóstico de conexão com SQL Server.
-- `GET /api/diag/openai`: diagnóstico de OpenAI (requer `DEV_ALLOW_DIAG_OPENAI=true`).
 
 ## Teste manual (o básico pra garantir que “tá vivo”)
 
-1. Validar config:
-
-- abrir no navegador: `GET /api/config/validate`
-
-2. Testar conexão com SQL:
-
-- `GET /api/diag/db`
-
-3. Rodar o pipeline sem custo da OpenAI (sanitização):
-
-- `GET /api/analyze/SEU_COD?mode=sanitized`
-
-4. Rodar o pipeline sem custo da OpenAI (SQL + sanitizer, valida tempos):
-
-- `GET /api/analyze/SEU_COD?mode=dry-run`
-
-5. Rodar análise completa:
+1. Rodar análise completa:
 
 - no frontend, informe o código e clique em **Analisar**
 - ou direto no backend: `GET /api/analyze/SEU_COD`
-
-## Checklist de depuração rápida
-
-1. Validar config:
-   - `GET /api/config/validate`
-2. Testar conexão com SQL:
-   - `GET /api/diag/db`
-3. Rodar dry-run do pipeline:
-   - `GET /api/analyze/:codProposta?mode=dry-run`
-4. Ajustar timeouts/limites:
-   - `MAX_OPENAI_INPUT_BYTES`
-   - `DB_REQUEST_TIMEOUT_MS`
-   - `OPENAI_TIMEOUT_MS`
 
 ## Problemas comuns
 

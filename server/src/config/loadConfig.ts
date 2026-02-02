@@ -135,19 +135,8 @@ export const pipelineSchema = {
         systemPrompt: { type: 'string' },
         userPromptTemplate: { type: 'string' },
         projectId: { type: 'string' },
-        outputSchema: {
-          type: 'object',
-          properties: {
-            enabled: { type: 'boolean' },
-            name: { type: 'string' },
-            strict: { type: 'boolean' },
-            schema: { type: 'object', additionalProperties: true },
-          },
-          required: ['enabled', 'name', 'strict', 'schema'],
-          additionalProperties: false,
-        },
       },
-      required: ['model', 'temperature', 'systemPrompt', 'userPromptTemplate', 'outputSchema'],
+      required: ['model', 'temperature', 'systemPrompt', 'userPromptTemplate'],
       additionalProperties: false,
     },
     cache: {
