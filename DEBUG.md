@@ -19,7 +19,7 @@ npm install
    cp server/.env.example server/.env
    ```
 
-2. Preencha as variáveis obrigatórias (conforme `README.md`).
+2. Preencha as variáveis obrigatórias (conforme `README.md`), incluindo `DB_CONNECTION_STRING`.
 3. Copie o SQL para `server/sql/analysis.sql` conforme instruções do `README.md`.
 
 ## 3) Abrir o projeto no VS Code

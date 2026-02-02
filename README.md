@@ -80,9 +80,8 @@ cp server/.env.example server/.env
 
 Preencha as variáveis:
 
-- `DB_SERVER`: servidor SQL (ex.: `AGSQLCVP02\Vendas`).
-- `DB_DATABASE`: base (ex.: `PVDB00`).
-- `DB_TRUST_SERVER_CERT`: `true` ou `false`.
+- `DB_CONNECTION_STRING`: string de conexão ODBC do SQL Server (ex.: `Driver={ODBC Driver 17 for SQL Server};Server=AGSQLCVP02\\Vendas;Database=PVDB00;Trusted_Connection=Yes;TrustServerCertificate=Yes;`).
+- `DB_TRUST_SERVER_CERT`: `true` ou `false` (se não estiver definido na connection string).
 - `OPENAI_API_KEY`: chave de API da OpenAI.
 - `OPENAI_CRYPTO_PASSPHRASE`: passphrase para criptografia dos campos fora da allow list (ex.: `cvp-local-dev-2026-02-02:um-segredo-bem-grande`).
 - `DEV_ALLOW_RAW`: `true` para permitir respostas sem sanitização (opcional).
