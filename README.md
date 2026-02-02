@@ -112,6 +112,17 @@ Pontos que você normalmente ajusta:
 - `privacy.normalizer`: limites de payload (arrays, strings, depth)
 - `openai.*`: modelo, temperature e prompts
 
+## Limpeza de payload para OpenAI
+
+Antes de enviar dados para a OpenAI, o backend aplica uma limpeza extra para reduzir payloads e remover “ruído” (tokens/JWT/base64/hex, blobs grandes e strings gigantes). A allowlist de campos permitidos fica em `server/config/allowlist-fields.json`.
+
+Limites padrão (com override via env):
+
+- `OPENAI_PAYLOAD_MAX_ARRAY_ITEMS` (default: 10)
+- `OPENAI_PAYLOAD_MAX_STRING` (default: 500)
+- `OPENAI_PAYLOAD_MAX_MESSAGE` (default: 2000)
+- `OPENAI_PAYLOAD_MAX_STACKTRACE` (default: 2000)
+
 ## Executar
 
 ```bash
