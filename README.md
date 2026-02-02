@@ -1,12 +1,12 @@
 # Analisador de Propostas (MVP)
 
-Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server com autenticação integrada do Windows e expõe um endpoint JSON para debug.
+Aplicação local para análise de propostas usando React + Vite no frontend e Node.js + Express no backend. O backend consulta o SQL Server via SQL Authentication e expõe um endpoint JSON para debug.
 
 ## Requisitos
 
-- Windows com ODBC Driver para SQL Server instalado.
+- SQL Server com autenticação SQL habilitada (Mixed Mode).
 - Node.js 18+.
-- Acesso de rede ao SQL Server `AGSQLCVP02\\Vendas`.
+- Acesso de rede ao SQL Server `AGSQLCVP02` (instância `Vendas`).
 
 ## Instalação
 
@@ -24,8 +24,12 @@ cp server/.env.example server/.env
 
 Preencha as variáveis:
 
-- `DB_SERVER`: servidor SQL (ex.: `AGSQLCVP02\\Vendas`).
+- `DB_SERVER`: servidor SQL (ex.: `AGSQLCVP02`).
+- `DB_INSTANCE`: instância SQL (ex.: `Vendas`).
 - `DB_DATABASE`: base (ex.: `PVDB00`).
+- `DB_USER`: usuário SQL (SQL Auth).
+- `DB_PASSWORD`: senha do usuário SQL.
+- `DB_ENCRYPT`: `true` ou `false` (default `false`).
 - `DB_TRUST_SERVER_CERT`: `true` ou `false`.
 - `OPENAI_API_KEY`: chave de API da OpenAI.
 - `OPENAI_CRYPTO_PASSPHRASE`: passphrase para criptografia dos campos fora da allow list.
