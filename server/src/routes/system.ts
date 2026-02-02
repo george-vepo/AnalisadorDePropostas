@@ -70,10 +70,12 @@ systemRouter.get('/diag/openai', async (_req, res) => {
 
   const configResult = getConfig();
   const model = configResult.config?.openai.model ?? process.env.OPENAI_MODEL ?? 'gpt-5.2-mini';
+  const projectId =
+    configResult.config?.openai.projectId?.trim() || process.env.OPENAI_PROJECT_ID?.trim() || undefined;
   const startedAt = performance.now();
 
   try {
-    await pingOpenAI(model, apiKey);
+    await pingOpenAI(model, apiKey, projectId);
     const elapsedMs = Math.round(performance.now() - startedAt);
     return res.json({ ok: true, elapsedMs, model });
   } catch (error) {

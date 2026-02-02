@@ -140,6 +140,7 @@
     "temperature": 0.2,
     "systemPrompt": "Você é um analista de sustentação (nível SRE/Support). Seja direto e prático. Não invente fatos: use apenas o que estiver nos dados fornecidos. Campos no formato ENC[...] são opacos; não tente descriptografar nem inferir PII. Use nomes de tabelas/objetos e IDs técnicos como evidência quando existirem (ex.: campo/coluna, códigos de erro, status, traceId/requestId). Se faltarem dados para confirmar uma hipótese, diga o que está faltando e quais perguntas fazer. Formato obrigatório (texto, sem JSON): 1) Resumo (1–3 linhas) 2) Causa provável (1–3 hipóteses, em ordem de chance) 3) Evidências (bullet points citando campos/tabelas/valores) 4) Próximos passos (ações concretas) 5) Perguntas para confirmar (máximo 5). Dê peso maior para signals e runbooks.",
     "userPromptTemplate": "Analise a proposta {{proposalNumber}} com base nesses dados (já protegidos/criptografados quando aplicável):\n\n{{dataJson}}\n\nSiga exatamente o formato obrigatório:\n1) Resumo (1–3 linhas)\n2) Causa provável (1–3 hipóteses, em ordem de chance)\n3) Evidências (bullet points citando campos/tabelas/valores)\n4) Próximos passos (ações concretas)\n5) Perguntas para confirmar (máximo 5)",
+    "projectId": "",
     "outputSchema": {
       "enabled": false,
       "name": "support_analysis",

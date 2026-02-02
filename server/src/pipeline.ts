@@ -62,6 +62,7 @@ export type PipelineConfig = {
     temperature: number;
     systemPrompt: string;
     userPromptTemplate: string;
+    projectId?: string;
     outputSchema: {
       enabled: boolean;
       name: string;
