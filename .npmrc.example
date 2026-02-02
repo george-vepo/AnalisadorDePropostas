@@ -1,0 +1,23 @@
+;Qualquer dúvida relacionada aos procedimentos abaixo, favor consultar o guia "Utilizar o Artifacts com NPM" na Wiki: 
+https://azuredevops.caixavidaeprevidencia.intranet/CVP/CVP.Frontends/_wiki/wikis/CVP.FrontEnds.wiki/11/Utilizar-o-Artifacts-com-NPM
+
+;Caso esteja usando a VPN, deverá ser configurado o proxy (Ficar atento ao uso de caracteres especiais na senha, 
+pois o npm apresenta alguns problemas quando se utiliza proxy: https://superuser.com/questions/273799/how-to-use-special-characters-in-username-password-for-http-proxy)
+
+
+proxy=http://Usuário:Senha@webproxy.rootbrasil.intranet
+
+registry=https://azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/registry/ 
+always-auth=true
+
+strict-ssl = false
+package-lock=false
+
+; begin auth token
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/registry/:username=Seu-Nome.Sobrenome
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/registry/:_password="Seu token gerado seguindo os passos da Wiki"
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/registry/:email=Seu-Email
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/:username=Seu-Nome.Sobrenome
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/:_password="Seu token gerado seguindo os passos da Wiki"
+//azuredevops.caixavidaeprevidencia.intranet/CVP/_packaging/NPM-Public/npm/:email=Seu-Email
+; end auth token
