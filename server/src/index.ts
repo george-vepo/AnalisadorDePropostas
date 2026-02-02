@@ -1,6 +1,5 @@
 import express from 'express';
 import './env';
-import { analysisRouter } from './routes/analysis';
 import { analyzeRouter } from './routes/analyze';
 import { systemRouter } from './routes/system';
 import { httpLogger, logger } from './logger';
@@ -16,7 +15,6 @@ app.use((req, _res, next) => {
   next();
 });
 app.use('/api', analyzeRouter);
-app.use('/api', analysisRouter);
 app.use('/api', systemRouter);
 
 const configResult = loadConfig();

@@ -33,12 +33,6 @@ const validConfig = {
     temperature: 0.2,
     systemPrompt: 'prompt',
     userPromptTemplate: 'template',
-    outputSchema: {
-      enabled: false,
-      name: 'schema',
-      strict: true,
-      schema: {},
-    },
   },
   cache: {
     enabled: true,

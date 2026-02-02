@@ -1,4 +1,3 @@
-
 export type RunbookCondition = {
   path: string;
   equals?: string | number | boolean;
@@ -63,12 +62,6 @@ export type PipelineConfig = {
     systemPrompt: string;
     userPromptTemplate: string;
     projectId?: string;
-    outputSchema: {
-      enabled: boolean;
-      name: string;
-      strict: boolean;
-      schema: Record<string, unknown>;
-    };
   };
   cache: {
     enabled: boolean;
