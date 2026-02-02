@@ -7,7 +7,7 @@ import { analyzeWithOpenAI, analyzeWithOpenAIText } from '../openaiClient';
 import { buildFallbackAnalysisText } from '../fallback';
 import { applyPayloadBudget } from '../payloadBudget';
 import { redactSensitive } from '../redaction';
-import { sanitizeAndEncrypt } from '../sanitizer';
+import { getAllowListSet, sanitizeAndEncrypt } from '../sanitizer';
 import { extractSignals } from '../signals/extractSignals';
 import { matchRunbooks } from '../runbooks/matchRunbooks';
 import { buildCacheKey } from '../cache';
@@ -22,6 +22,7 @@ export const analyzeRouter = Router();
 
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
+const allowListSet = getAllowListSet();
 
 const buildErrorResponse = (message: string, details?: string) => ({
   error: {
@@ -231,7 +232,7 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
   try {
     sanitizedResult = sanitizeAndEncrypt(
       normalized,
-      configResult.config.privacy.allowList,
+      allowListSet,
       configResult.config.privacy.crypto,
       process.env.OPENAI_CRYPTO_PASSPHRASE ?? '',
     );
