@@ -7,6 +7,10 @@
     "dev": "concurrently \"npm run dev:web\" \"npm run dev:server\"",
     "dev:web": "vite",
     "dev:server": "tsx watch server/src/index.ts",
+    "dev:web:node18": "set \"PATH=%USERPROFILE%\\tools\\node18;%PATH%\" &&  vite",
+    "dev:server:node18": "set \"PATH=%USERPROFILE%\\tools\\node18;%PATH%\" &&  tsx watch server/src/index.ts",
+    "dev:node18": "set \"PATH=%USERPROFILE%\\tools\\node18;%PATH%\" && npm run dev",
+    "install:node18": "set \"PATH=%USERPROFILE%\\tools\\node18;%PATH%\" && npm install",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run"
