@@ -134,6 +134,7 @@ export const pipelineSchema = {
         temperature: { type: 'number' },
         systemPrompt: { type: 'string' },
         userPromptTemplate: { type: 'string' },
+        projectId: { type: 'string' },
         outputSchema: {
           type: 'object',
           properties: {

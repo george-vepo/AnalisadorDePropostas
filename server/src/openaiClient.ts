@@ -16,6 +16,7 @@ type OpenAIConfig = {
   temperature: number;
   systemPrompt: string;
   userPromptTemplate: string;
+  projectId?: string;
   outputSchema?: OpenAIOutputSchemaConfig;
 };
 
@@ -137,16 +138,21 @@ const postOpenAI = async (
   body: Record<string, unknown>,
   apiKey: string,
   options: OpenAIRequestOptions,
+  projectId?: string,
 ) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (projectId) {
+    headers['OpenAI-Project'] = projectId;
+  }
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -171,12 +177,13 @@ const postOpenAIWithRetry = async (
   body: Record<string, unknown>,
   apiKey: string,
   options: OpenAIRequestOptions,
+  projectId?: string,
 ) => {
   let attempt = 0;
   let lastError: unknown = null;
   while (attempt <= options.maxRetries) {
     try {
-      const result = await postOpenAI(body, apiKey, options);
+      const result = await postOpenAI(body, apiKey, options, projectId);
       if (!result.response.ok && shouldRetry(result.response.status) && attempt < options.maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, options.retryBackoffMs * (attempt + 1)));
         attempt += 1;
@@ -207,11 +214,13 @@ export const analyzeWithOpenAIText = async (
     proposalNumber,
     dataJson,
   });
+  const projectId = config.projectId?.trim() || process.env.OPENAI_PROJECT_ID?.trim();
 
   const { response, payload, rawText } = await postOpenAIWithRetry(
     buildRequestBody(config, userPrompt),
     apiKey,
     requestOptions,
+    projectId,
   );
 
   if (!response.ok) {
@@ -250,11 +259,13 @@ export const analyzeWithOpenAI = async (
     schema: structuredAnalysisSchema,
   };
   const schemaForValidation = schemaConfig.schema ?? structuredAnalysisSchema;
+  const projectId = config.projectId?.trim() || process.env.OPENAI_PROJECT_ID?.trim();
 
   const { response, payload, rawText } = await postOpenAIWithRetry(
     buildRequestBody(config, userPrompt, schemaConfig.enabled ? 'json_schema' : undefined),
     apiKey,
     requestOptions,
+    projectId,
   );
 
   if (!response.ok) {
@@ -263,6 +274,7 @@ export const analyzeWithOpenAI = async (
         buildRequestBody(config, userPrompt, 'json_object'),
         apiKey,
         requestOptions,
+        projectId,
       );
       if (!retry.response.ok) {
         const retryError = retry.payload?.error?.message ?? retry.rawText;
@@ -277,7 +289,7 @@ export const analyzeWithOpenAI = async (
   return processOpenAIPayload(payload, schemaForValidation);
 };
 
-export const pingOpenAI = async (model: string, apiKey: string) => {
+export const pingOpenAI = async (model: string, apiKey: string, projectId?: string) => {
   const body = {
     model,
     input: [{ role: 'user', content: 'ping' }],
@@ -290,7 +302,7 @@ export const pingOpenAI = async (model: string, apiKey: string) => {
     retryBackoffMs: 500,
   };
 
-  const { response, payload, rawText } = await postOpenAIWithRetry(body, apiKey, options);
+  const { response, payload, rawText } = await postOpenAIWithRetry(body, apiKey, options, projectId);
   if (!response.ok) {
     const errorMessage = payload?.error?.message ?? rawText;
     throw new Error(`OpenAI error: ${response.status} ${errorMessage}`);
