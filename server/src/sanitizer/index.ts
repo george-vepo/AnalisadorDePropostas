@@ -1,5 +1,5 @@
-export { sanitizeAndEncrypt, sanitizeAny } from './sanitizeAndEncrypt';
-export type { SanitizeStats } from './sanitizeAndEncrypt';
+export { sanitizeAny, sanitizeForOpenAI } from './sanitizeForOpenAI';
+export type { SanitizeStats } from './sanitizeForOpenAI';
 export { getAllowListSet, loadAllowListFields } from './allowlistFields';
 export { normalizeFieldName } from './normalizeFieldName';
 export {

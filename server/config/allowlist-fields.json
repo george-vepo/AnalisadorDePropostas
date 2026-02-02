@@ -62,6 +62,8 @@
   "DTH_CHAMADA",
   "DES_ENVIO",
   "DES_RETORNO",
+  "envio_nao_parseavel",
+  "retorno_nao_parseavel",
   "URL_SERVICO",
   "NOM_VERBO_HTTP_CHAMADA",
   "DTH_INICIO_CHAMADA",

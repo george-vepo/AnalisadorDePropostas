@@ -7,7 +7,7 @@ import { analyzeWithOpenAI, analyzeWithOpenAIText } from '../openaiClient';
 import { buildFallbackAnalysisText } from '../fallback';
 import { applyPayloadBudget } from '../payloadBudget';
 import { redactSensitive } from '../redaction';
-import { getAllowListSet, sanitizeAndEncrypt, stripPayloadNoise } from '../sanitizer';
+import { getAllowListSet, sanitizeForOpenAI } from '../sanitizer';
 import { extractSignals } from '../signals/extractSignals';
 import { matchRunbooks } from '../runbooks/matchRunbooks';
 import { buildCacheKey } from '../cache';
@@ -230,12 +230,11 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
   const sanitizeStart = performance.now();
   let sanitizedResult;
   try {
-    sanitizedResult = sanitizeAndEncrypt(
-      normalized,
-      allowListSet,
-      configResult.config.privacy.crypto,
-      process.env.OPENAI_CRYPTO_PASSPHRASE ?? '',
-    );
+    sanitizedResult = sanitizeForOpenAI(normalized, allowListSet, {
+      maxStringLength: Number(process.env.OPENAI_PAYLOAD_MAX_STRING ?? 500),
+      maxStackTraceLength: Number(process.env.OPENAI_PAYLOAD_MAX_STACKTRACE ?? 2000),
+      maxPayloadBytes: Number(process.env.MAX_OPENAI_INPUT_BYTES ?? 150000),
+    });
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Erro desconhecido ao proteger dados.';
     incrementError();
@@ -380,27 +379,17 @@ analyzeRouter.get('/analyze/:codProposta', async (req, res) => {
     openaiError = 'OPENAI_API_KEY não configurada.';
   } else {
     const maxOpenAiBytes = Number(process.env.MAX_OPENAI_INPUT_BYTES ?? 150000);
-    const stripNoiseStart = performance.now();
-    const cleanedPayload = stripPayloadNoise(sanitizedResult.sanitizedJson, {
-      allowList: allowListSet,
-      maxArrayItems: Number(process.env.OPENAI_PAYLOAD_MAX_ARRAY_ITEMS ?? 10),
-      maxStringLength: Number(process.env.OPENAI_PAYLOAD_MAX_STRING ?? 500),
-      maxMessageLength: Number(process.env.OPENAI_PAYLOAD_MAX_MESSAGE ?? 2000),
-      maxStackTraceLength: Number(process.env.OPENAI_PAYLOAD_MAX_STACKTRACE ?? 2000),
-    });
-    stageTimings.stripNoise = Math.round(performance.now() - stripNoiseStart);
-    logStage('stripNoise', stageTimings.stripNoise);
     const payloadForModel = {
       proposalNumber: codProposta,
       signals,
       runbooks: runbooksMatched,
-      data: cleanedPayload,
+      data: sanitizedResult.sanitizedJson,
     };
     payloadBytesForModel = toBytes(payloadForModel);
     let payloadForModelAdjusted = payloadForModel;
 
     if (payloadBytesForModel > maxOpenAiBytes) {
-      const reduced = applyPayloadBudget(cleanedPayload, maxOpenAiBytes);
+      const reduced = applyPayloadBudget(sanitizedResult.sanitizedJson, maxOpenAiBytes);
       payloadForModelAdjusted = {
         proposalNumber: codProposta,
         signals,
