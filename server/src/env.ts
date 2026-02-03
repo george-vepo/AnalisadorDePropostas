@@ -17,7 +17,7 @@ if (result.error) {
   );
 }
 
-const pacEnabled = initPacProxyFromEnv();
+const pacEnabled = initPacProxyFromEnv(logger);
 logger.info(
   { pacEnabled, pacUrlDefined: Boolean(process.env.PROXY_PAC_URL) },
   'Proxy PAC init',
