@@ -9,7 +9,7 @@ Aplicação local para análise de propostas usando React + Vite no frontend e N
 - Acesso de rede ao SQL Server `AGSQLCVP02\Vendas`.
 - (Se usar registry interno) acesso ao Azure Artifacts / VPN conforme padrão da empresa.
 
-## Configuração do NPM (IMPORTANTE em ambiente corporativo)
+## Configuração do NPM / Proxy (IMPORTANTE em ambiente corporativo)
 
 Se você estiver em VPN/rede corporativa e o `npm install` der erro tipo `ECONNRESET` (muito comum em `msnodesqlv8` por causa de download de headers/prebuild), configure o `.npmrc`.
 
@@ -21,8 +21,11 @@ copy .npmrc.example .npmrc
 
 2. Edite o arquivo `.npmrc` e preencha:
 
+- `proxy` (se aplicável)
 - `registry` (Azure Artifacts)
 - `username/_password/email` (token do Artifacts conforme a Wiki)
+
+> Dica: senha com caracteres especiais em proxy pode dar dor de cabeça; se rolar, use a recomendação da própria Wiki/link no `.npmrc.example`.
 
 3. Garanta que **.npmrc não será commitado**:
 
@@ -86,6 +89,32 @@ Preencha as variáveis:
 - `DB_REQUEST_TIMEOUT_MS`: timeout por query SQL em ms (default 30000).
 - `DB_CONNECTION_TIMEOUT_MS`: timeout de conexão SQL em ms (default 10000).
 
+## Configuração de Proxy (OpenAI/HTTP)
+
+Se sua rede exige proxy (por exemplo, erro `ECONNRESET` ao acessar a OpenAI), configure no `.env` do backend (`server/.env`).
+
+### Opção A: HTTP_PROXY / HTTPS_PROXY
+
+```env
+HTTP_PROXY=http://usuario:senha@proxy.corp.local:8080
+HTTPS_PROXY=http://usuario:senha@proxy.corp.local:8080
+NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,*.corp.local
+```
+
+> Observação: se incluir usuário/senha na URL, a senha precisa estar URL-encoded (ex.: `@` vira `%40`).
+
+### Opção B: variáveis separadas
+
+```env
+PROXY_HOST=proxy.corp.local
+PROXY_PORT=8080
+PROXY_USERNAME=usuario
+PROXY_PASSWORD=senha
+NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,*.corp.local
+```
+
+O backend monta a URL do proxy com encoding seguro de usuário/senha e não registra credenciais nos logs.
+
 ## Scripts SQL
 
 1. Copie o conteúdo do arquivo original `Script Analise.sql` para `server/sql/analysis.sql`.
@@ -147,7 +176,7 @@ npm run dev
 ## Problemas comuns
 
 - `ECONNRESET` baixando `node-*-headers.tar.gz` (msnodesqlv8 / node-gyp):
-  - revise o `.npmrc` (seção acima)
+  - quase sempre é proxy/registry. Configure `.npmrc` (seção acima)
   - tente `NODE_OPTIONS=--dns-result-order=ipv4first`
 
 - `EPERM: operation not permitted` removendo `node_modules`:
