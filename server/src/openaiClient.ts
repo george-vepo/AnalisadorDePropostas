@@ -127,12 +127,43 @@ export const analyzeWithOpenAIText = async (
   });
   const projectId = config.projectId?.trim() || process.env.OPENAI_PROJECT_ID?.trim();
 
-  const { response, payload, rawText } = await postOpenAIWithRetry(
-    buildRequestBody(config, userPrompt),
-    apiKey,
-    requestOptions,
-    projectId,
+  logger.info(
+    {
+      proposalNumber,
+      model: config.model,
+      hasProjectId: Boolean(projectId),
+    },
+    'Calling OpenAI',
   );
+
+  let response: Response;
+  let payload: any;
+  let rawText: string;
+  try {
+    ({ response, payload, rawText } = await postOpenAIWithRetry(
+      buildRequestBody(config, userPrompt),
+      apiKey,
+      requestOptions,
+      projectId,
+    ));
+    logger.info(
+      {
+        status: response.status,
+        requestId: response.headers.get('x-request-id') ?? undefined,
+      },
+      'OpenAI response received',
+    );
+  } catch (error) {
+    logger.error(
+      {
+        err: error,
+        proposalNumber,
+        model: config.model,
+      },
+      'OpenAI request failed',
+    );
+    throw error;
+  }
 
   if (!response.ok) {
     const requestId = response.headers.get('x-request-id') ?? undefined;
