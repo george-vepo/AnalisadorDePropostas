@@ -1,5 +1,7 @@
 import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { createPacResolver } from 'pac-resolver';
+import crypto from 'node:crypto';
+import vm from 'node:vm';
 import { logger } from '../logger';
 
 type PacResolver = (url: string, host: string) => string | Promise<string>;
@@ -10,6 +12,8 @@ const DIRECT_AGENT_TIMEOUTS = {
   headersTimeout: 30_000,
   bodyTimeout: 30_000,
 };
+const PAC_VM_TIMEOUT_MS = 250;
+const PAC_EXEC_TIMEOUT_MS = 250;
 
 const directAgent = new Agent(DIRECT_AGENT_TIMEOUTS);
 const proxyAgentCache = new Map<string, ProxyAgent>();
@@ -88,8 +92,13 @@ const sanitizePacResult = (result: string) =>
     .filter(Boolean)
     .join('; ');
 
-const normalizePac = (pacScript: string) => {
-  const trimmed = pacScript.trim();
+const stripPacComments = (pacScript: string) =>
+  pacScript
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n\r]*/g, '');
+
+const detectPacFormat = (pacScript: string) => {
+  const trimmed = stripPacComments(pacScript.trim());
   const hasFunctionDeclaration = /function\s+FindProxyForURL\s*\(/.test(trimmed);
   const assignmentFunction = /(?:^|\s)(?:var|let|const)?\s*FindProxyForURL\s*=\s*function\s*\(/.test(
     trimmed,
@@ -99,10 +108,26 @@ const normalizePac = (pacScript: string) => {
   );
 
   if (hasFunctionDeclaration) {
+    return { hasFindProxyForURL: true, format: 'declaration' as const };
+  }
+  if (assignmentFunction) {
+    return { hasFindProxyForURL: true, format: 'assignment-function' as const };
+  }
+  if (assignmentArrow) {
+    return { hasFindProxyForURL: true, format: 'assignment-arrow' as const };
+  }
+  return { hasFindProxyForURL: false, format: 'missing' as const };
+};
+
+const normalizePac = (pacScript: string) => {
+  const trimmed = pacScript.trim();
+  const { format } = detectPacFormat(trimmed);
+
+  if (format === 'declaration') {
     return { script: trimmed, format: 'declaration' as const };
   }
 
-  if (assignmentFunction || assignmentArrow) {
+  if (format === 'assignment-function' || format === 'assignment-arrow') {
     const rewritten = trimmed
       .replace(
         /(\b(?:var|let|const)?\s*)FindProxyForURL(\s*=\s*function\s*\()/,
@@ -116,11 +141,85 @@ const normalizePac = (pacScript: string) => {
       '\nfunction FindProxyForURL(url, host) { return __PAC_FIND_PROXY_FOR_URL__(url, host); }\n';
     return {
       script: `${rewritten}${wrapper}`,
-      format: assignmentFunction ? 'assignment-function' : 'assignment-arrow',
+      format,
     };
   }
 
   return { script: trimmed, format: 'unknown' as const };
+};
+
+const hashPacScript = (pacScript: string) =>
+  crypto.createHash('sha256').update(pacScript).digest('hex');
+
+const getErrorSummary = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  return String(error);
+};
+
+const toIpInt = (ip: string) => {
+  const parts = ip.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+  return (
+    ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+  );
+};
+
+const createPacHelpers = () => ({
+  isPlainHostName: (host: string) => !host.includes('.'),
+  dnsDomainIs: (host: string, domain: string) => host.endsWith(domain),
+  localHostOrDomainIs: (host: string, hostDom: string) =>
+    host === hostDom || host === hostDom.split('.')[0],
+  dnsDomainLevels: (host: string) => host.split('.').length - 1,
+  shExpMatch: (str: string, shexp: string) => {
+    const escaped = shexp.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    const regex = new RegExp(`^${escaped}$`, 'i');
+    return regex.test(str);
+  },
+  dnsResolve: (host: string) => (toIpInt(host) === null ? '' : host),
+  myIpAddress: () => '127.0.0.1',
+  isInNet: (ipAddr: string, pattern: string, mask: string) => {
+    const ip = toIpInt(ipAddr);
+    const pat = toIpInt(pattern);
+    const maskInt = toIpInt(mask);
+    if (ip === null || pat === null || maskInt === null) return false;
+    return (ip & maskInt) === (pat & maskInt);
+  },
+});
+
+const createVmPacResolver = (pacScript: string): PacResolver => {
+  const context = vm.createContext(Object.create(null), {
+    codeGeneration: { strings: false, wasm: false },
+  });
+
+  Object.assign(context, createPacHelpers());
+  const script = new vm.Script(pacScript, { filename: 'proxy.pac' });
+  script.runInContext(context, { timeout: PAC_VM_TIMEOUT_MS });
+
+  if (typeof (context as { FindProxyForURL?: unknown }).FindProxyForURL !== 'function') {
+    throw new Error('PAC não define FindProxyForURL após execução.');
+  }
+
+  return async (url: string, host: string) => {
+    (context as { __url?: string }).__url = url;
+    (context as { __host?: string }).__host = host;
+    return vm.runInContext('FindProxyForURL(__url, __host)', context, {
+      timeout: PAC_EXEC_TIMEOUT_MS,
+    }) as string;
+  };
+};
+
+const createPacResolverFromScript = (pacScript: string, format: string) => {
+  try {
+    return { resolver: createPacResolver(pacScript) as PacResolver, engine: 'pac-resolver' };
+  } catch (error) {
+    logger.warn(
+      { error: getErrorSummary(error), format },
+      'Falha ao compilar PAC com pac-resolver. Tentando VM.',
+    );
+  }
+  return { resolver: createVmPacResolver(pacScript), engine: 'vm' };
 };
 
 const getPacResolver = (pacUrl: string) => {
@@ -149,35 +248,33 @@ const getPacResolver = (pacUrl: string) => {
     }
 
     const { script: normalized, format } = normalizePac(pacScript);
+    const { hasFindProxyForURL, format: detectedFormat } = detectPacFormat(pacScript);
+    const hash = hashPacScript(pacScript);
     logger.info(
       {
         pacUrl: sanitizeUrl(pacUrl),
         status: response.status,
         contentType,
         bytes: pacScript.length,
-        format,
+        format: detectedFormat,
+        normalizedFormat: format,
+        hasFindProxyForURL,
+        hash,
         usesDirectForPacFetch: Boolean(fetchInit.dispatcher),
       },
       'PAC download result',
     );
 
-    if (!/FindProxyForURL\s*\(/.test(normalized)) {
+    if (!hasFindProxyForURL) {
       throw new Error('Conteúdo baixado não parece PAC (não achei FindProxyForURL).');
     }
 
-    try {
-      return createPacResolver(normalized) as PacResolver;
-    } catch (error) {
-      logger.error(
-        {
-          pacUrl: sanitizeUrl(pacUrl),
-          format,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        'Falha ao compilar PAC com pac-resolver.',
-      );
-      throw error;
-    }
+    const { resolver, engine } = createPacResolverFromScript(normalized, format);
+    logger.info(
+      { pacUrl: sanitizeUrl(pacUrl), engine },
+      'PAC resolver selecionado.',
+    );
+    return resolver;
   })();
 
   resolverCache.set(pacUrl, resolverPromise);
@@ -213,6 +310,13 @@ const parseDirective = (
     return { type: 'PROXY', proxyUrl: `${scheme}://${hostPort}` };
   }
 
+  if (type === 'SOCKS' || type === 'SOCKS5') {
+    if (!rest) return null;
+    const hostPort = stripCredentials(rest.trim());
+    if (!hostPort) return null;
+    return { type: 'PROXY', proxyUrl: `socks://${hostPort}` };
+  }
+
   return { type: 'UNSUPPORTED' };
 };
 
@@ -239,9 +343,11 @@ const getFallbackProxyAgent = (targetUrl: string) => {
 
   const fallbackProxyUrl = getFallbackProxyUrl(target);
   if (!fallbackProxyUrl) {
-    throw new Error(
-      'Nenhum proxy de fallback configurado (PROXY_FALLBACK_URL/HTTPS_PROXY/HTTP_PROXY).',
+    logger.warn(
+      { targetUrl },
+      'Nenhum proxy de fallback configurado. Usando conexão direta.',
     );
+    return directAgent;
   }
 
   logger.warn(
@@ -267,6 +373,13 @@ export const resolveUndiciDispatcherFromPac = async (
   }
 
   const resolvedTarget = new URL(targetUrl);
+  if (hostMatchesNoProxy(resolvedTarget.hostname)) {
+    logger.info(
+      { targetUrl, hostname: resolvedTarget.hostname },
+      'Target em NO_PROXY. Ignorando PAC.',
+    );
+    return directAgent;
+  }
   let resolver: PacResolver;
   try {
     resolver = await getPacResolver(pacUrl);
@@ -334,4 +447,11 @@ export const resolveUndiciDispatcherFromPac = async (
     'PAC sem diretivas úteis. Usando fallback.',
   );
   return getFallbackProxyAgent(targetUrl);
+};
+
+export const __test__ = {
+  detectPacFormat,
+  normalizePac,
+  createPacResolverFromScript,
+  parseDirective,
 };
