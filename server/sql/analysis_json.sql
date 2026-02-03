@@ -1,5 +1,4 @@
-DECLARE @cod_propostas_csv VARCHAR(MAX) = '3010229000041-2,
-3027829003587-5';
+DECLARE @cod_propostas_csv VARCHAR(MAX) = @codPropostas;
 -- ex: '8405430000074-7,8405430000088-1'
 ;
 WITH propostas AS (
