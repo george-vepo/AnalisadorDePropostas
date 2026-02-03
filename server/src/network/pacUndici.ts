@@ -54,11 +54,23 @@ const getPacResolver = (pacUrl: string) => {
   if (cached) return cached;
 
   const resolverPromise = (async () => {
-    const response = await fetch(pacUrl);
+    const pacParsed = new URL(pacUrl);
+    const fetchInit: { dispatcher?: Dispatcher } = {};
+    if (pacParsed.hostname === '127.0.0.1' || pacParsed.hostname === 'localhost') {
+      fetchInit.dispatcher = directAgent;
+    }
+
+    const response = await fetch(pacUrl, fetchInit);
     if (!response.ok) {
       throw new Error(`Falha ao baixar PAC (${response.status}).`);
     }
     const pacScript = await response.text();
+    if (!pacScript || pacScript.length < 50) {
+      throw new Error('PAC vazio/curto demais (conteúdo inválido).');
+    }
+    if (!/FindProxyForURL\s*\(/.test(pacScript)) {
+      throw new Error('Conteúdo baixado não parece PAC (não achei FindProxyForURL).');
+    }
     return createPacResolver(pacScript) as PacResolver;
   })();
 
@@ -108,20 +120,27 @@ const getProxyAgent = (proxyUrl: string) => {
 
 export const resolveUndiciDispatcherFromPac = async (
   targetUrl: string,
-): Promise<Dispatcher> => {
+): Promise<Dispatcher | undefined> => {
   const pacUrl = process.env.PROXY_PAC_URL?.trim();
   if (!pacUrl) {
     logger.warn(
       { targetUrl },
-      'PROXY_PAC_URL não definido. Usando conexão direta.',
+      'PROXY_PAC_URL não definido. Usando dispatcher padrão do runtime.',
     );
-    return directAgent;
+    return undefined;
   }
 
   const resolvedTarget = new URL(targetUrl);
   const resolver = await getPacResolver(pacUrl);
   const pacResult = await resolver(targetUrl, resolvedTarget.hostname);
-  const pacResultValue = typeof pacResult === 'string' ? pacResult : '';
+  const pacResultValue = String(pacResult ?? '').trim();
+  if (!pacResultValue) {
+    logger.warn(
+      { pacUrl: sanitizeUrl(pacUrl), targetUrl },
+      'PAC retornou vazio. Caindo para DIRECT (ou fallback).',
+    );
+    return undefined;
+  }
   const directives = pacResultValue
     .split(DIRECTIVE_SEPARATOR)
     .map((item) => item.trim())
@@ -146,5 +165,9 @@ export const resolveUndiciDispatcherFromPac = async (
     if (parsed.type === 'PROXY') return getProxyAgent(parsed.proxyUrl);
   }
 
-  return directAgent;
+  logger.warn(
+    { targetUrl },
+    'PAC sem diretivas úteis. Usando dispatcher padrão do runtime.',
+  );
+  return undefined;
 };
