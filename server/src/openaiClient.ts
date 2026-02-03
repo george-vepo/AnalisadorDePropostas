@@ -137,6 +137,16 @@ const resolveDispatcher = async (proxy?: string | null | "pac") => {
   return { dispatcher: undefined, proxyMode: "default" as const };
 };
 
+const fetchWithDispatcher = async (
+  url: string,
+  init: RequestInit,
+  dispatcher?: any,
+) => {
+  const fetchInit: RequestInit & { dispatcher?: any } = { ...init };
+  if (dispatcher) fetchInit.dispatcher = dispatcher;
+  return fetch(url, fetchInit);
+};
+
 const renderTemplate = (template: string, values: Record<string, string>) => {
   return Object.entries(values).reduce((result, [key, value]) => {
     return result.replaceAll(`{{${key}}}`, value);
@@ -253,9 +263,11 @@ const postOpenAI = async (
       body: JSON.stringify(body),
       signal: controller.signal,
     };
-    if (dispatcher) fetchInit.dispatcher = dispatcher;
-
-    const response = await fetch(OPENAI_ENDPOINT, fetchInit);
+    const response = await fetchWithDispatcher(
+      OPENAI_ENDPOINT,
+      fetchInit,
+      dispatcher,
+    );
 
     const rawText = await response.text();
     let payload: any = null;
