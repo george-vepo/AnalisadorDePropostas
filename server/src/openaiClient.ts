@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 type OpenAIConfig = {
   model: string;
   temperature: number;
@@ -38,10 +40,8 @@ const buildRequestBody = (config: OpenAIConfig, userPrompt: string): Record<stri
   return {
     model: config.model,
     temperature: config.temperature,
-    input: [
-      { role: 'system', content: config.systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
+    instructions: config.systemPrompt,
+    input: userPrompt,
   };
 };
 
@@ -135,10 +135,29 @@ export const analyzeWithOpenAIText = async (
   );
 
   if (!response.ok) {
+    const requestId = response.headers.get('x-request-id') ?? undefined;
+    const errorBody = payload ?? rawText;
+    logger.error(
+      {
+        status: response.status,
+        requestId,
+        errorBody,
+      },
+      'OpenAI response error',
+    );
     throw new Error(`OpenAI error: ${response.status} ${rawText}`);
   }
 
   if (payload?.error) {
+    const requestId = response.headers.get('x-request-id') ?? undefined;
+    logger.error(
+      {
+        status: response.status,
+        requestId,
+        errorBody: payload.error,
+      },
+      'OpenAI response error',
+    );
     throw new Error(payload.error.message ?? 'Erro retornado pela OpenAI.');
   }
 

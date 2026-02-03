@@ -278,7 +278,7 @@ analyzeRouter.post('/analyze', async (req, res) => {
         configResult.config.openai,
         apiKey,
         {
-          timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 30000),
+          timeoutMs: Math.max(120000, Number(process.env.OPENAI_TIMEOUT_MS ?? 120000)),
           maxRetries: 1,
           retryBackoffMs: 500,
         },
