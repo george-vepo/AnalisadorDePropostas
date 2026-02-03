@@ -19,6 +19,16 @@ export type AnalysisDataResult = {
   fallbackUsed: boolean;
 };
 
+export type MultiAnalysisDataItem = {
+  codigoProposta: string;
+  resultadoJson: Record<string, unknown>;
+};
+
+export type MultiAnalysisDataResult = {
+  items: MultiAnalysisDataItem[];
+  elapsedMs: number;
+};
+
 export class SqlTimeoutError extends Error {
   constructor(message: string) {
     super(message);
@@ -47,6 +57,32 @@ const executeQueryWithRetry = async (
     try {
       const request = pool.request();
       request.input('codProposta', sql.VarChar(50), codProposta);
+      const result = await request.query(sqlText);
+      return (result.recordsets ?? []) as Array<Array<Record<string, unknown>>>;
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        throw new SqlTimeoutError('Timeout no SQL');
+      }
+      if (attempt < maxAttempts && isTransientError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+  return [];
+};
+
+const executeMultiQueryWithRetry = async (
+  sqlText: string,
+  codPropostasCsv: string,
+  pool: Awaited<ReturnType<typeof getPool>>,
+) => {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const request = pool.request();
+      request.input('codPropostas', sql.VarChar(sql.MAX), codPropostasCsv);
       const result = await request.query(sqlText);
       return (result.recordsets ?? []) as Array<Array<Record<string, unknown>>>;
     } catch (error) {
@@ -92,6 +128,41 @@ const extractJsonData = (recordsets: Array<Array<Record<string, unknown>>>) => {
   throw new Error('Formato de JSON inválido.');
 };
 
+const extractMultiJsonData = (recordsets: Array<Array<Record<string, unknown>>>) => {
+  const firstSet = recordsets[0] ?? [];
+  return firstSet.map((row) => {
+    const codigoProposta = String(
+      (row as Record<string, unknown>).COD_PROPOSTA ??
+        (row as Record<string, unknown>).cod_proposta ??
+        (row as Record<string, unknown>).codigoProposta ??
+        '',
+    ).trim();
+    if (!codigoProposta) {
+      throw new Error('COD_PROPOSTA ausente no resultado.');
+    }
+
+    const jsonValue =
+      (row as Record<string, unknown>).ResultadoJson ??
+      (row as Record<string, unknown>).resultadoJson ??
+      (row as Record<string, unknown>).data ??
+      Object.values(row)[0];
+
+    if (!jsonValue) {
+      throw new Error(`Coluna JSON não encontrada para proposta ${codigoProposta}.`);
+    }
+
+    if (typeof jsonValue === 'string') {
+      return { codigoProposta, resultadoJson: JSON.parse(jsonValue) as Record<string, unknown> };
+    }
+
+    if (typeof jsonValue === 'object') {
+      return { codigoProposta, resultadoJson: jsonValue as Record<string, unknown> };
+    }
+
+    throw new Error(`Formato de JSON inválido para proposta ${codigoProposta}.`);
+  });
+};
+
 const executeRecordsetsQuery = async (codProposta: string, pool: Awaited<ReturnType<typeof getPool>>) => {
   return executeQueryWithRetry(analysisSql, codProposta, pool);
 };
@@ -129,4 +200,19 @@ export const fetchAnalysisFromDb = async (codProposta: string): Promise<Analysis
       fallbackUsed: true,
     };
   }
+};
+
+export const fetchAnalysesFromDb = async (codPropostas: string[]): Promise<MultiAnalysisDataResult> => {
+  const startedAt = performance.now();
+  const pool = await getPool();
+  const codPropostasCsv = codPropostas.join(',');
+
+  const recordsets = await executeMultiQueryWithRetry(analysisJsonSql, codPropostasCsv, pool);
+  const items = extractMultiJsonData(recordsets);
+  const elapsedMs = Math.round(performance.now() - startedAt);
+
+  return {
+    items,
+    elapsedMs,
+  };
 };
