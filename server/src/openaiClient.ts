@@ -1,5 +1,6 @@
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
+import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
 
 type OpenAIConfig = {
   model: string;
@@ -7,7 +8,7 @@ type OpenAIConfig = {
   systemPrompt: string;
   userPromptTemplate: string;
   projectId?: string;
-  proxy?: string | null; // null => força sem proxy; string => usa proxy; undefined => padrão
+  proxy?: string | null | "pac"; // null => força sem proxy; string => usa proxy; undefined => padrão
 };
 
 type OpenAIRequestOptions = {
@@ -19,7 +20,13 @@ type OpenAIRequestOptions = {
 const VERBOSE_OPENAI_LOG = process.env.OPENAI_LOG_VERBOSE === "1";
 const MAX_LOG_CHARS = Number(process.env.OPENAI_LOG_MAX_CHARS ?? 2000);
 
-const noProxyAgent = new Agent();
+const OPENAI_ENDPOINT = "https://api.openai.com/v1/responses";
+
+const noProxyAgent = new Agent({
+  connectTimeout: 10_000,
+  headersTimeout: 30_000,
+  bodyTimeout: 30_000,
+});
 
 const truncate = (value: string, max = MAX_LOG_CHARS) => {
   if (!value) return value;
@@ -48,22 +55,80 @@ const serializeError = (err: unknown) => {
   return { message: safeJsonStringify(err) };
 };
 
+const extractNetworkErrorDetails = (err: unknown) => {
+  if (!err || typeof err !== "object") return undefined;
+  const anyErr = err as any;
+  const cause = anyErr.cause;
+  const source =
+    cause && typeof cause === "object" ? (cause as any) : (anyErr as any);
+
+  const code = source?.code ?? anyErr?.code;
+  const errno = source?.errno ?? anyErr?.errno;
+  const syscall = source?.syscall ?? anyErr?.syscall;
+  const host =
+    source?.host ?? source?.hostname ?? source?.address ?? anyErr?.host;
+  const port = source?.port ?? anyErr?.port;
+
+  if (!code && !errno && !syscall && !host && !port) return undefined;
+  return { code, errno, syscall, host, port };
+};
+
+const isRetryableNetworkError = (err: unknown) => {
+  const details = extractNetworkErrorDetails(err);
+  const anyErr = err as any;
+  const code = details?.code ?? anyErr?.code;
+  const name = typeof anyErr?.name === "string" ? anyErr.name : "";
+  const retryableCodes = new Set([
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EPIPE",
+    "ECONNREFUSED",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_BODY_TIMEOUT",
+    "UND_ERR_SOCKET",
+    "UND_ERR_CONNECT_ABORTED",
+  ]);
+  if (code && retryableCodes.has(String(code))) return true;
+  if (name.includes("TimeoutError")) return true;
+  return false;
+};
+
 const headersToObject = (headers: Headers) => {
   const obj: Record<string, string> = {};
   for (const [k, v] of headers.entries()) obj[k.toLowerCase()] = v;
   return obj;
 };
 
-const resolveDispatcher = (proxy?: string | null) => {
+const getProxyMode = (proxy?: string | null | "pac") => {
+  if (proxy === null) return "no-proxy" as const;
+  if (proxy === "pac") return "pac" as const;
+  if (typeof proxy === "string" && proxy.trim()) return "proxy" as const;
+  return "default" as const;
+};
+
+const resolveDispatcher = async (proxy?: string | null | "pac") => {
   // proxy === null => força conexão direta (sem proxy do ambiente)
   if (proxy === null) {
     return { dispatcher: noProxyAgent, proxyMode: "no-proxy" as const };
   }
 
+  if (proxy === "pac") {
+    return {
+      dispatcher: await resolveUndiciDispatcherFromPac(OPENAI_ENDPOINT),
+      proxyMode: "pac" as const,
+    };
+  }
+
   // proxy string => usa proxy explícito
   if (typeof proxy === "string" && proxy.trim()) {
     return {
-      dispatcher: new ProxyAgent(proxy.trim()),
+      dispatcher: new ProxyAgent({
+        uri: proxy.trim(),
+        connectTimeout: 10_000,
+        headersTimeout: 30_000,
+        bodyTimeout: 30_000,
+      }),
       proxyMode: "proxy" as const,
     };
   }
@@ -145,7 +210,7 @@ const postOpenAI = async (
   apiKey: string,
   options: OpenAIRequestOptions,
   projectId?: string,
-  proxy?: string | null,
+  proxy?: string | null | "pac",
 ): Promise<PostOpenAIResult> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
@@ -156,14 +221,14 @@ const postOpenAI = async (
   };
   if (projectId) headers["OpenAI-Project"] = projectId;
 
-  const { dispatcher, proxyMode } = resolveDispatcher(proxy);
+  const { dispatcher, proxyMode } = await resolveDispatcher(proxy);
 
   const start = Date.now();
   try {
     if (VERBOSE_OPENAI_LOG) {
       logger.debug(
         {
-          endpoint: "https://api.openai.com/v1/responses",
+          endpoint: OPENAI_ENDPOINT,
           timeoutMs: options.timeoutMs,
           proxyMode,
           requestBody: summarizeRequestBodyForLog(body),
@@ -173,7 +238,7 @@ const postOpenAI = async (
     } else {
       logger.info(
         {
-          endpoint: "https://api.openai.com/v1/responses",
+          endpoint: OPENAI_ENDPOINT,
           timeoutMs: options.timeoutMs,
           proxyMode,
           requestBody: summarizeRequestBodyForLog(body),
@@ -182,7 +247,7 @@ const postOpenAI = async (
       );
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(OPENAI_ENDPOINT, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -230,6 +295,7 @@ const postOpenAI = async (
   } catch (error) {
     const durationMs = Date.now() - start;
     const err = serializeError(error);
+    const networkError = extractNetworkErrorDetails(error);
 
     // AbortError normalmente é timeout
     const isAbort =
@@ -244,8 +310,10 @@ const postOpenAI = async (
         proxyMode,
         err,
         isTimeout: isAbort,
+        isNetworkError: Boolean(networkError),
+        networkError,
       },
-      "Erro na requisição para OpenAI",
+      "Erro de rede na requisição para OpenAI",
     );
 
     // IMPORTANTÍSSIMO: não engolir o erro, senão o retry quebra
@@ -260,7 +328,7 @@ const postOpenAIWithRetry = async (
   apiKey: string,
   options: OpenAIRequestOptions,
   projectId?: string,
-  proxy?: string | null,
+  proxy?: string | null | "pac",
 ) => {
   let attempt = 0;
   let lastError: unknown = null;
@@ -282,6 +350,7 @@ const postOpenAIWithRetry = async (
       const result = await postOpenAI(body, apiKey, options, projectId, proxy);
 
       if (
+        result?.response &&
         !result.response.ok &&
         shouldRetry(result.response.status) &&
         attempt < options.maxRetries
@@ -308,9 +377,14 @@ const postOpenAIWithRetry = async (
         continue;
       }
 
+      if (!result?.response) {
+        throw new Error("OpenAI response ausente.");
+      }
+
       return result;
     } catch (error) {
       lastError = error;
+      const retryableNetwork = isRetryableNetworkError(error);
 
       if (attempt >= options.maxRetries) {
         logger.error(
@@ -331,7 +405,8 @@ const postOpenAIWithRetry = async (
           attempt: attempt + 1,
           durationMs: Date.now() - attemptStart,
           backoffMs,
-          retryReason: "exception",
+          retryReason: retryableNetwork ? "network_error" : "exception",
+          retryableNetwork,
           err: serializeError(error),
         },
         "OpenAI: retrying due to exception",
@@ -369,7 +444,7 @@ export const analyzeWithOpenAIText = async (
     timeoutMs: requestOptions.timeoutMs,
     maxRetries: requestOptions.maxRetries,
     retryBackoffMs: requestOptions.retryBackoffMs,
-    proxyMode: resolveDispatcher(config.proxy).proxyMode,
+    proxyMode: getProxyMode(config.proxy),
     systemPromptLen: config.systemPrompt?.length ?? 0,
     userPromptLen: userPrompt.length,
     dataJsonLen: dataJson.length,

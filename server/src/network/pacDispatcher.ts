@@ -1,13 +1,19 @@
-import type { Dispatcher } from 'undici';
-import { setGlobalDispatcher } from 'undici';
-import { PacProxyAgent } from 'pac-proxy-agent';
-
 type LoggerLike = {
-  warn: (obj: Record<string, unknown>, msg: string) => void;
+  info: (obj: Record<string, unknown>, msg: string) => void;
 };
 
-const isUndiciDispatcher = (candidate: unknown): candidate is Dispatcher =>
-  Boolean(candidate) && typeof (candidate as Dispatcher).dispatch === 'function';
+const sanitizeUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password) {
+      parsed.username = '[REDACTED]';
+      parsed.password = '';
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+};
 
 export function initPacProxyFromEnv(logger: LoggerLike) {
   const pacUrl = process.env.PROXY_PAC_URL?.trim();
@@ -15,25 +21,9 @@ export function initPacProxyFromEnv(logger: LoggerLike) {
     return false;
   }
 
-  let agent: unknown;
-  try {
-    agent = new PacProxyAgent(pacUrl);
-  } catch (error) {
-    logger.warn(
-      { err: error instanceof Error ? error.message : String(error), pacUrl },
-      'Falha ao criar PacProxyAgent. Proxy PAC ignorado.',
-    );
-    return false;
-  }
-
-  if (!isUndiciDispatcher(agent)) {
-    logger.warn(
-      { pacUrl },
-      'PacProxyAgent não implementa Dispatcher do Undici. Proxy PAC ignorado.',
-    );
-    return false;
-  }
-
-  setGlobalDispatcher(agent);
+  logger.info(
+    { pacUrl: sanitizeUrl(pacUrl) },
+    'Proxy PAC configurado. Resolução será feita por request.',
+  );
   return true;
 }
