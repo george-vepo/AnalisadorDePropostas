@@ -1,3 +1,4 @@
+import { Agent } from 'undici';
 import { logger } from './logger';
 
 type OpenAIConfig = {
@@ -6,12 +7,22 @@ type OpenAIConfig = {
   systemPrompt: string;
   userPromptTemplate: string;
   projectId?: string;
+  proxy?: string | null;
 };
 
 type OpenAIRequestOptions = {
   timeoutMs: number;
   maxRetries: number;
   retryBackoffMs: number;
+};
+
+const noProxyAgent = new Agent();
+
+const resolveDispatcher = (proxy?: string | null) => {
+  if (proxy === null) {
+    return noProxyAgent;
+  }
+  return undefined;
 };
 
 const renderTemplate = (template: string, values: Record<string, string>) => {
@@ -50,6 +61,7 @@ const postOpenAI = async (
   apiKey: string,
   options: OpenAIRequestOptions,
   projectId?: string,
+  proxy?: string | null,
 ) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
@@ -66,6 +78,7 @@ const postOpenAI = async (
       headers,
       body: JSON.stringify(body),
       signal: controller.signal,
+      dispatcher: resolveDispatcher(proxy),
     });
 
     const rawText = await response.text();
@@ -89,12 +102,13 @@ const postOpenAIWithRetry = async (
   apiKey: string,
   options: OpenAIRequestOptions,
   projectId?: string,
+  proxy?: string | null,
 ) => {
   let attempt = 0;
   let lastError: unknown = null;
   while (attempt <= options.maxRetries) {
     try {
-      const result = await postOpenAI(body, apiKey, options, projectId);
+      const result = await postOpenAI(body, apiKey, options, projectId, proxy);
       if (!result.response.ok && shouldRetry(result.response.status) && attempt < options.maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, options.retryBackoffMs * (attempt + 1)));
         attempt += 1;
@@ -145,6 +159,7 @@ export const analyzeWithOpenAIText = async (
       apiKey,
       requestOptions,
       projectId,
+      config.proxy,
     ));
     logger.info(
       {

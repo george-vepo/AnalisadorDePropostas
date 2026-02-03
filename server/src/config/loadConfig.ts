@@ -135,6 +135,7 @@ export const pipelineSchema = {
         systemPrompt: { type: 'string' },
         userPromptTemplate: { type: 'string' },
         projectId: { type: 'string' },
+        proxy: { type: ['string', 'null'] },
       },
       required: ['model', 'temperature', 'systemPrompt', 'userPromptTemplate'],
       additionalProperties: false,

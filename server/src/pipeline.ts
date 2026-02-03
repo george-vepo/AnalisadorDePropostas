@@ -62,6 +62,7 @@ export type PipelineConfig = {
     systemPrompt: string;
     userPromptTemplate: string;
     projectId?: string;
+    proxy?: string | null;
   };
   cache: {
     enabled: boolean;
