@@ -14,7 +14,45 @@ const DIRECT_AGENT_TIMEOUTS = {
 const directAgent = new Agent(DIRECT_AGENT_TIMEOUTS);
 const proxyAgentCache = new Map<string, ProxyAgent>();
 const resolverCache = new Map<string, Promise<PacResolver>>();
-const FALLBACK_PROXY_URL = process.env.PROXY_FALLBACK_URL?.trim();
+
+const getEnvProxy = (key: string) =>
+  process.env[key]?.trim() || process.env[key.toLowerCase()]?.trim() || '';
+
+const getNoProxyList = () => {
+  const raw = getEnvProxy('NO_PROXY');
+  return raw
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+};
+
+const hostMatchesNoProxy = (hostname: string) => {
+  const host = hostname.toLowerCase();
+  const entries = getNoProxyList();
+  if (entries.length === 0) return false;
+
+  for (const entry of entries) {
+    if (entry === '*') return true;
+    const normalized = entry.replace(/^\./, '');
+    const hostOnly = normalized.split(':')[0];
+    if (!hostOnly) continue;
+    if (host === hostOnly) return true;
+    if (host.endsWith(`.${hostOnly}`)) return true;
+  }
+  return false;
+};
+
+const getFallbackProxyUrl = (target: URL) => {
+  const fallback = getEnvProxy('PROXY_FALLBACK_URL');
+  const httpsProxy = getEnvProxy('HTTPS_PROXY');
+  const httpProxy = getEnvProxy('HTTP_PROXY');
+  const schemeProxy =
+    target.protocol === 'https:'
+      ? httpsProxy || httpProxy
+      : httpProxy || httpsProxy;
+
+  return fallback || schemeProxy || '';
+};
 
 const sanitizeUrl = (value: string) => {
   try {
@@ -92,7 +130,11 @@ const getPacResolver = (pacUrl: string) => {
   const resolverPromise = (async () => {
     const pacParsed = new URL(pacUrl);
     const fetchInit: { dispatcher?: Dispatcher } = {};
-    if (pacParsed.hostname === '127.0.0.1' || pacParsed.hostname === 'localhost') {
+    if (
+      pacParsed.hostname === '127.0.0.1' ||
+      pacParsed.hostname === 'localhost' ||
+      hostMatchesNoProxy(pacParsed.hostname)
+    ) {
       fetchInit.dispatcher = directAgent;
     }
 
@@ -114,6 +156,7 @@ const getPacResolver = (pacUrl: string) => {
         contentType,
         bytes: pacScript.length,
         format,
+        usesDirectForPacFetch: Boolean(fetchInit.dispatcher),
       },
       'PAC download result',
     );
@@ -184,6 +227,33 @@ const getProxyAgent = (proxyUrl: string) => {
   return agent;
 };
 
+const getFallbackProxyAgent = (targetUrl: string) => {
+  const target = new URL(targetUrl);
+  if (hostMatchesNoProxy(target.hostname)) {
+    logger.info(
+      { targetUrl, hostname: target.hostname },
+      'Target em NO_PROXY. Usando conexão direta.',
+    );
+    return directAgent;
+  }
+
+  const fallbackProxyUrl = getFallbackProxyUrl(target);
+  if (!fallbackProxyUrl) {
+    throw new Error(
+      'Nenhum proxy de fallback configurado (PROXY_FALLBACK_URL/HTTPS_PROXY/HTTP_PROXY).',
+    );
+  }
+
+  logger.warn(
+    {
+      targetUrl,
+      fallbackProxy: sanitizeUrl(fallbackProxyUrl),
+    },
+    'Usando proxy de fallback após falha no PAC.',
+  );
+  return getProxyAgent(fallbackProxyUrl);
+};
+
 export const resolveUndiciDispatcherFromPac = async (
   targetUrl: string,
 ): Promise<Dispatcher | undefined> => {
@@ -209,27 +279,38 @@ export const resolveUndiciDispatcherFromPac = async (
       },
       'Falha ao obter resolver do PAC. Usando fallback.',
     );
-    if (FALLBACK_PROXY_URL) {
-      return getProxyAgent(FALLBACK_PROXY_URL);
-    }
-    return directAgent;
+    return getFallbackProxyAgent(targetUrl);
   }
 
-  const pacResult = await resolver(targetUrl, resolvedTarget.hostname);
-  const pacResultValue = String(pacResult ?? '').trim();
+  let pacResultValue = '';
+  try {
+    const pacResult = await resolver(targetUrl, resolvedTarget.hostname);
+    pacResultValue = String(pacResult ?? '').trim();
+  } catch (error) {
+    logger.warn(
+      {
+        pacUrl: sanitizeUrl(pacUrl),
+        targetUrl,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'Falha ao executar PAC. Usando fallback.',
+    );
+    return getFallbackProxyAgent(targetUrl);
+  }
+
   if (!pacResultValue) {
     logger.warn(
       { pacUrl: sanitizeUrl(pacUrl), targetUrl },
-      'PAC retornou vazio. Caindo para DIRECT (ou fallback).',
+      'PAC retornou vazio. Usando fallback.',
     );
-    return FALLBACK_PROXY_URL ? getProxyAgent(FALLBACK_PROXY_URL) : directAgent;
+    return getFallbackProxyAgent(targetUrl);
   }
   const directives = pacResultValue
     .split(DIRECTIVE_SEPARATOR)
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const firstDirective = directives[0] ?? 'DIRECT';
+  const firstDirective = directives[0] ?? '';
 
   logger.info(
     {
@@ -250,7 +331,7 @@ export const resolveUndiciDispatcherFromPac = async (
 
   logger.warn(
     { targetUrl },
-    'PAC sem diretivas úteis. Usando dispatcher padrão do runtime.',
+    'PAC sem diretivas úteis. Usando fallback.',
   );
-  return FALLBACK_PROXY_URL ? getProxyAgent(FALLBACK_PROXY_URL) : directAgent;
+  return getFallbackProxyAgent(targetUrl);
 };
