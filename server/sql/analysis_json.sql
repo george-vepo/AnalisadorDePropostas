@@ -1,4 +1,5 @@
-DECLARE @cod_propostas_csv VARCHAR(MAX) = @codPropostas;
+DECLARE @cod_propostas_csv VARCHAR(MAX) = '3010229000041-2,
+3027829003587-5';
 -- ex: '8405430000074-7,8405430000088-1'
 ;
 WITH propostas AS (
@@ -34,13 +35,7 @@ b AS (
     LEFT JOIN PV_041_PROPOSTA_AUX_VIDA av ON av.COD_VENDA = pr.COD_VENDA
 )
 SELECT b.COD_PROPOSTA,
-  j.ResultadoJson,
-  LEN(j.ResultadoJson) AS QtdCaracteres,
-  DATALENGTH(j.ResultadoJson) AS QtdBytes,
-  CAST(LEN(j.ResultadoJson) / 4.0 AS DECIMAL(18, 2)) AS TokensEstimados_Aprox_CharsDiv4,
-  CAST(LEN(j.ResultadoJson) / 3.6 AS DECIMAL(18, 2)) AS TokensEstimados_Aprox_CharsDiv36,
-  LEFT(j.ResultadoJson, 1200) AS PreviewInicio,
-  RIGHT(j.ResultadoJson, 1200) AS PreviewFim
+  j.ResultadoJson
 FROM b
   CROSS APPLY (
     SELECT (
@@ -245,57 +240,7 @@ FROM b
               WHERE dv.COD_VENDA = b.COD_VENDA FOR JSON PATH
             ),
             '[]'
-          ) AS PV_019_DEVOLUCAO,
-          -- ✅ LOGS COMPLETOS (sem tratamento)
-          ISNULL(
-            (
-              SELECT lsr.COD_LOG_SERVICO_REST,
-                lsr.COD_SESSAO,
-                lsr.DTH_CHAMADA,
-                lsr.DES_ENVIO,
-                lsr.DES_RETORNO,
-                lsr.URL_SERVICO,
-                lsr.NOM_VERBO_HTTP_CHAMADA,
-                lsr.DTH_INICIO_CHAMADA,
-                lsr.DTH_FIM_CHAMADA
-              FROM PV_028_LOG_SERVICO_REST lsr WITH (NOLOCK)
-              WHERE lsr.COD_SESSAO = b.COD_SESSAO
-                AND (
-                  lsr.URL_SERVICO IN (
-                    '/api/v1/RegistroVenda',
-                    '/api/v1/Pagamento/debitoOnline',
-                    '/api/v1/Cartao/GerarLinkPagamento',
-                    '/api/v1/Cartao/DetalhePagamento',
-                    '/api/v1/Cartao/RealizarPagamento',
-                    '/api/v1/Documento/Boleto'
-                  )
-                  OR lsr.DES_RETORNO LIKE '%"sucesso":false%'
-                ) FOR JSON PATH
-            ),
-            '[]'
-          ) AS PV_028_LOG_SERVICO_REST,
-          ISNULL(
-            (
-              SELECT lsre.COD_HTTP_CHAMADA,
-                lsre.DES_ENVIO,
-                lsre.DES_RETORNO,
-                lsre.URL_SERVICO
-              FROM PV_082_LOG_SERVICO_REST_EXTERNO lsre WITH (NOLOCK)
-              WHERE lsre.COD_SESSAO = b.COD_SESSAO
-                AND (
-                  lsre.URL_SERVICO IN (
-                    'https://integracao.caixavidaeprevidencia.com.br/api/GenericBackEnd/GBE_RealizarPagamento_CC',
-                    'https://integracao.caixavidaeprevidencia.com.br/api/GenericBackEnd/GBE_ConsultarDetalhePagamento_CC',
-                    'https://integracao.caixavidaeprevidencia.com.br/api/GenericBackEnd/GBE_DebitarOnline',
-                    'https://integracao.caixavidaeprevidencia.com.br/api/GenericBackEnd/GBE_GerarLink_CC',
-                    'https://integracao.caixavidaeprevidencia.com.br/api/Boleto/ServiceHub_GerarBoleto',
-                    'https://integracao.caixavidaeprevidencia.com.br/api/PlataformaCaixa/DebitarOnlinePlataforma'
-                  )
-                  OR lsre.DES_RETORNO LIKE '%"sucesso":false%'
-                ) FOR JSON PATH
-            ),
-            '[]'
-          ) AS PV_082_LOG_SERVICO_REST_EXTERNO FOR JSON PATH,
+          ) AS PV_019_DEVOLUCAO FOR JSON PATH,
           WITHOUT_ARRAY_WRAPPER
       ) AS ResultadoJson
   ) j;
