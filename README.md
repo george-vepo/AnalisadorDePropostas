@@ -89,6 +89,32 @@ Preencha as variáveis:
 - `DB_REQUEST_TIMEOUT_MS`: timeout por query SQL em ms (default 30000).
 - `DB_CONNECTION_TIMEOUT_MS`: timeout de conexão SQL em ms (default 10000).
 
+## Configuração de Proxy (OpenAI/HTTP)
+
+Se sua rede exige proxy (por exemplo, erro `ECONNRESET` ao acessar a OpenAI), configure no `.env` do backend (`server/.env`).
+
+### Opção A: HTTP_PROXY / HTTPS_PROXY
+
+```env
+HTTP_PROXY=http://usuario:senha@proxy.corp.local:8080
+HTTPS_PROXY=http://usuario:senha@proxy.corp.local:8080
+NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,*.corp.local
+```
+
+> Observação: se incluir usuário/senha na URL, a senha precisa estar URL-encoded (ex.: `@` vira `%40`).
+
+### Opção B: variáveis separadas
+
+```env
+PROXY_HOST=proxy.corp.local
+PROXY_PORT=8080
+PROXY_USERNAME=usuario
+PROXY_PASSWORD=senha
+NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,*.corp.local
+```
+
+O backend monta a URL do proxy com encoding seguro de usuário/senha e não registra credenciais nos logs.
+
 ## Scripts SQL
 
 1. Copie o conteúdo do arquivo original `Script Analise.sql` para `server/sql/analysis.sql`.
