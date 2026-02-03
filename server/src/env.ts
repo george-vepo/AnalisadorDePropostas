@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from './logger';
+import { initPacProxyFromEnv } from './network/pacDispatcher';
 import { initNetworkFromEnv } from './network/proxy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,4 +17,12 @@ if (result.error) {
   );
 }
 
-initNetworkFromEnv(logger);
+const pacEnabled = initPacProxyFromEnv();
+logger.info(
+  { pacEnabled, pacUrlDefined: Boolean(process.env.PROXY_PAC_URL) },
+  'Proxy PAC init',
+);
+
+if (!pacEnabled) {
+  initNetworkFromEnv(logger);
+}
