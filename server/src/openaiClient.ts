@@ -247,13 +247,15 @@ const postOpenAI = async (
       );
     }
 
-    const response = await fetch(OPENAI_ENDPOINT, {
+    const fetchInit: any = {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal,
-      dispatcher,
-    } as any);
+    };
+    if (dispatcher) fetchInit.dispatcher = dispatcher;
+
+    const response = await fetch(OPENAI_ENDPOINT, fetchInit);
 
     const rawText = await response.text();
     let payload: any = null;
