@@ -1,5 +1,3 @@
-USE PVDB00;
-GO -- Agora recebe várias propostas em uma string separada por vírgula
 DECLARE @cod_propostas_csv VARCHAR(MAX) = @codPropostas;
 -- ex: '8405430000074-7,8405430000088-1'
 ;
