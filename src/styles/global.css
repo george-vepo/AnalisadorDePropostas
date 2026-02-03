@@ -39,12 +39,14 @@ label {
   font-weight: 600;
 }
 
-input[type="text"] {
+input[type="text"],
+textarea {
   width: 100%;
   padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid #cbd5f5;
   font-size: 1rem;
+  font-family: inherit;
 }
 
 button {
@@ -94,6 +96,12 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.helper {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
 .result {
   background: #ffffff;
   border-radius: 16px;
@@ -106,4 +114,27 @@ button:disabled {
 .analysis-subtitle {
   margin: 4px 0 0;
   color: #475569;
+}
+
+.results-list {
+  display: grid;
+  gap: 16px;
+}
+
+.result-item {
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.result-item h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.error-message {
+  color: #b91c1c;
+  margin: 0;
+  font-weight: 600;
 }
