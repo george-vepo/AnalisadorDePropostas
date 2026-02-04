@@ -67,23 +67,35 @@ const looksLikeJson = (value: string): boolean => {
   return trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"{') || trimmed.startsWith('"[');
 };
 
-const tryParseJsonString = (value: string, maxDepth = 2): { parsed: unknown } | null => {
-  let current: unknown = value;
-  for (let attempt = 0; attempt < maxDepth; attempt += 1) {
-    if (typeof current !== 'string') return null;
-    if (!looksLikeJson(current)) return null;
-    try {
-      const parsed = JSON.parse(current);
-      if (typeof parsed === 'string') {
-        current = parsed;
-        continue;
+const stripNonInformationalChars = (value: string): string => {
+  return value.replace(/[{}\[\],"]/g, '').replace(/\s+/g, '').trim();
+};
+
+const sanitizeJsonStringByRegex = (value: string, allowList: Set<string>): string => {
+  const sensitiveFieldRegex = new RegExp(
+    `"([^"]+)"\\s*:\\s*("([^"\\\\]|\\\\.)*"|\\d+|true|false|null)`,
+    'gi',
+  );
+  const sanitized = value.replace(sensitiveFieldRegex, (match, key, rawValue) => {
+    const normalizedKey = normalizeFieldName(key) ?? '';
+    const isTokenField = normalizedKey
+      ? TOKEN_FIELD_MARKERS.some((marker) => normalizedKey.includes(marker))
+      : false;
+    if (!normalizedKey || (!shouldKeepFieldName(normalizedKey, allowList) && !isTokenField)) {
+      if (typeof rawValue === 'string' && rawValue.startsWith('"')) {
+        const innerValue = rawValue.slice(1, -1).trim();
+        if (innerValue.startsWith('{') || innerValue.startsWith('[')) {
+          return match;
+        }
       }
-      return { parsed };
-    } catch {
-      return null;
+      return `"${key}":"[REMOVIDO]"`;
     }
-  }
-  return null;
+    if (isTokenField) {
+      return `"${key}":"[REMOVIDO]"`;
+    }
+    return match;
+  });
+  return stripNonInformationalChars(sanitized);
 };
 
 const truncateWithSuffix = (value: string, maxLength: number): string => {
@@ -92,9 +104,10 @@ const truncateWithSuffix = (value: string, maxLength: number): string => {
 };
 
 const sanitizeString = (fieldNorm: string, value: string, options: Required<StripPayloadOptions>): unknown => {
-  const parsed = tryParseJsonString(value);
-  if (parsed) {
-    return sanitizeAny(parsed.parsed, options);
+  if (looksLikeJson(value)) {
+    const sanitizedJson = sanitizeJsonStringByRegex(value, options.allowList);
+    if (sanitizedJson.length > options.maxStringLength) return '[REMOVIDO_POR_TAMANHO]';
+    return sanitizedJson;
   }
 
   if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
