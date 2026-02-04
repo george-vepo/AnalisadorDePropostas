@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
 import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
@@ -21,6 +23,7 @@ const VERBOSE_OPENAI_LOG = process.env.OPENAI_LOG_VERBOSE === "1";
 const MAX_LOG_CHARS = Number(process.env.OPENAI_LOG_MAX_CHARS ?? 2000);
 
 const OPENAI_ENDPOINT = "https://api.openai.com/v1/responses";
+const OPENAI_RECORDS_DIR = path.join(process.cwd(), "server", "logs", "openai");
 
 const noProxyAgent = new Agent({
   connectTimeout: 10_000,
@@ -31,6 +34,19 @@ const noProxyAgent = new Agent({
 const truncate = (value: string, max = MAX_LOG_CHARS) => {
   if (!value) return value;
   return value.length > max ? `${value.slice(0, max)}…(truncado)` : value;
+};
+
+const formatTimestamp = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
+    date.getHours(),
+  )}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+};
+
+const sanitizeFilenamePart = (value: string) => {
+  const cleaned = value.replace(/[^a-zA-Z0-9-_]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  const trimmed = cleaned.slice(0, 80);
+  return trimmed || "proposta";
 };
 
 const safeJsonStringify = (value: unknown) => {
@@ -182,6 +198,30 @@ const buildRequestBody = (
     instructions: config.systemPrompt,
     input: userPrompt,
   };
+};
+
+const writeOpenAIRecord = async (params: {
+  proposalNumber: string;
+  timestamp: Date;
+  requestBody: Record<string, unknown>;
+  responseBody: string;
+}) => {
+  const safeProposalNumber = sanitizeFilenamePart(params.proposalNumber);
+  const filename = `${safeProposalNumber}-${formatTimestamp(params.timestamp)}.txt`;
+  const content = [
+    `Proposta: ${params.proposalNumber}`,
+    `DataHora: ${params.timestamp.toISOString()}`,
+    "",
+    "Requisicao:",
+    JSON.stringify(params.requestBody, null, 2),
+    "",
+    "Resposta:",
+    params.responseBody,
+    "",
+  ].join("\n");
+
+  await fs.mkdir(OPENAI_RECORDS_DIR, { recursive: true });
+  await fs.writeFile(path.join(OPENAI_RECORDS_DIR, filename), content, "utf8");
 };
 
 const summarizeRequestBodyForLog = (body: Record<string, unknown>) => {
@@ -446,6 +486,7 @@ export const analyzeWithOpenAIText = async (
     proposalNumber,
     dataJson,
   });
+  const requestBody = buildRequestBody(config, userPrompt);
 
   const projectId =
     config.projectId?.trim() || process.env.OPENAI_PROJECT_ID?.trim();
@@ -476,7 +517,7 @@ export const analyzeWithOpenAIText = async (
   try {
     ({ response, payload, rawText, durationMs, requestId } =
       await postOpenAIWithRetry(
-        buildRequestBody(config, userPrompt),
+        requestBody,
         apiKey,
         requestOptions,
         projectId,
@@ -553,6 +594,25 @@ export const analyzeWithOpenAIText = async (
     },
     "OpenAI: output extracted",
   );
+
+  try {
+    const responseBody =
+      rawText && rawText.trim() ? rawText : safeJsonStringify(payload ?? {});
+    await writeOpenAIRecord({
+      proposalNumber,
+      timestamp: new Date(),
+      requestBody,
+      responseBody,
+    });
+  } catch (error) {
+    logger.warn(
+      {
+        ...baseLogCtx,
+        err: serializeError(error),
+      },
+      "Falha ao registrar requisicao e resposta da OpenAI",
+    );
+  }
 
   if (text) {
     return { text, raw: payload };
