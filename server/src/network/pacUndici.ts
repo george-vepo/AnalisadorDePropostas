@@ -22,70 +22,29 @@ const resolverCache = new Map<string, Promise<PacResolver>>();
 const getEnvProxy = (key: string) =>
   process.env[key]?.trim() || process.env[key.toLowerCase()]?.trim() || '';
 
-const getNoProxyEnvValue = () => {
-  const upper = process.env.NO_PROXY?.trim();
-  const lower = process.env.no_proxy?.trim();
-  if (upper) return upper;
-  if (lower) return lower;
-  return '';
-};
-
-const parseNoProxyEnv = (value: string) =>
-  value
-    .split(/[;,]/)
+const getNoProxyList = () => {
+  const raw = getEnvProxy('NO_PROXY');
+  return raw
+    .split(',')
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
-
-const splitNoProxyEntry = (entry: string) => {
-  const hasIpv6 = entry.includes(']');
-  const hasPort = entry.includes(':') && !hasIpv6;
-  if (hasPort) {
-    const lastColon = entry.lastIndexOf(':');
-    const host = entry.slice(0, lastColon);
-    const port = entry.slice(lastColon + 1);
-    if (host && port) {
-      return { host, port };
-    }
-  }
-  return { host: entry };
 };
 
-const matchesNoProxy = (
-  hostname: string,
-  port?: string,
-  entries = parseNoProxyEnv(getNoProxyEnvValue()),
-) => {
+const hostMatchesNoProxy = (hostname: string) => {
   const host = hostname.toLowerCase();
-  if (!host || entries.length === 0) return null;
+  const entries = getNoProxyList();
+  if (entries.length === 0) return false;
 
   for (const entry of entries) {
-    if (entry === '*') return entry;
-    if (entry === '<local>') {
-      if (host === 'localhost' || !host.includes('.')) return entry;
-      continue;
-    }
-    const { host: entryHost, port: entryPort } = splitNoProxyEntry(entry);
-    if (!entryHost) continue;
-    if (entryPort) {
-      if (!port || port !== entryPort) continue;
-    }
-    if (entryHost.startsWith('.')) {
-      if (host.endsWith(entryHost)) return entry;
-      continue;
-    }
-    if (host === entryHost) return entry;
+    if (entry === '*') return true;
+    const normalized = entry.replace(/^\./, '');
+    const hostOnly = normalized.split(':')[0];
+    if (!hostOnly) continue;
+    if (host === hostOnly) return true;
+    if (host.endsWith(`.${hostOnly}`)) return true;
   }
-  return null;
+  return false;
 };
-
-const getUrlPort = (url: URL) => {
-  if (url.port) return url.port;
-  if (url.protocol === 'https:') return '443';
-  if (url.protocol === 'http:') return '80';
-  return undefined;
-};
-
-const getNoProxyMatchForUrl = (url: URL) => matchesNoProxy(url.hostname, getUrlPort(url));
 
 const getFallbackProxyUrl = (target: URL) => {
   const fallback = getEnvProxy('PROXY_FALLBACK_URL');
@@ -268,61 +227,40 @@ const getPacResolver = (pacUrl: string) => {
   if (cached) return cached;
 
   const resolverPromise = (async () => {
-    let responseText = '';
-    let responseStatus = 0;
-    let contentType = 'unknown';
-    try {
-      const response = await fetch(pacUrl, { dispatcher: directAgent });
-      responseStatus = response.status;
-      contentType = response.headers.get('content-type') ?? 'unknown';
-      responseText = await response.text();
-      if (!response.ok) {
-        logger.warn(
-          {
-            pacUrl: sanitizeUrl(pacUrl),
-            status: responseStatus,
-            contentType,
-            bytes: responseText.length,
-          },
-          'Falha ao baixar PAC.',
-        );
-        throw new Error(`Falha ao baixar PAC (${responseStatus}).`);
-      }
-    } catch (error) {
-      logger.warn(
-        { pacUrl: sanitizeUrl(pacUrl), error: getErrorSummary(error) },
-        'Erro ao baixar PAC.',
-      );
-      throw error;
+    const pacParsed = new URL(pacUrl);
+    const fetchInit: { dispatcher?: Dispatcher } = {};
+    if (
+      pacParsed.hostname === '127.0.0.1' ||
+      pacParsed.hostname === 'localhost' ||
+      hostMatchesNoProxy(pacParsed.hostname)
+    ) {
+      fetchInit.dispatcher = directAgent;
     }
 
-    if (!responseText || responseText.length < 50) {
-      logger.warn(
-        {
-          pacUrl: sanitizeUrl(pacUrl),
-          status: responseStatus,
-          contentType,
-          bytes: responseText.length,
-        },
-        'PAC vazio/curto demais (conteúdo inválido).',
-      );
+    const response = await fetch(pacUrl, fetchInit);
+    const contentType = response.headers.get('content-type') ?? 'unknown';
+    if (!response.ok) {
+      throw new Error(`Falha ao baixar PAC (${response.status}).`);
+    }
+    const pacScript = await response.text();
+    if (!pacScript || pacScript.length < 50) {
       throw new Error('PAC vazio/curto demais (conteúdo inválido).');
     }
 
-    const { script: normalized, format } = normalizePac(responseText);
-    const { hasFindProxyForURL, format: detectedFormat } = detectPacFormat(responseText);
-    const hash = hashPacScript(responseText);
+    const { script: normalized, format } = normalizePac(pacScript);
+    const { hasFindProxyForURL, format: detectedFormat } = detectPacFormat(pacScript);
+    const hash = hashPacScript(pacScript);
     logger.info(
       {
         pacUrl: sanitizeUrl(pacUrl),
-        status: responseStatus,
+        status: response.status,
         contentType,
-        bytes: responseText.length,
+        bytes: pacScript.length,
         format: detectedFormat,
         normalizedFormat: format,
         hasFindProxyForURL,
         hash,
-        usesDirectForPacFetch: true,
+        usesDirectForPacFetch: Boolean(fetchInit.dispatcher),
       },
       'PAC download result',
     );
@@ -395,15 +333,10 @@ const getProxyAgent = (proxyUrl: string) => {
 
 const getFallbackProxyAgent = (targetUrl: string) => {
   const target = new URL(targetUrl);
-  const noProxyMatch = getNoProxyMatchForUrl(target);
-  if (noProxyMatch) {
+  if (hostMatchesNoProxy(target.hostname)) {
     logger.info(
-      {
-        targetUrl: sanitizeUrl(targetUrl),
-        hostname: target.hostname,
-        noProxyMatch,
-      },
-      'Bypass proxy via NO_PROXY.',
+      { targetUrl, hostname: target.hostname },
+      'Target em NO_PROXY. Usando conexão direta.',
     );
     return directAgent;
   }
@@ -411,7 +344,7 @@ const getFallbackProxyAgent = (targetUrl: string) => {
   const fallbackProxyUrl = getFallbackProxyUrl(target);
   if (!fallbackProxyUrl) {
     logger.warn(
-      { targetUrl: sanitizeUrl(targetUrl) },
+      { targetUrl },
       'Nenhum proxy de fallback configurado. Usando conexão direta.',
     );
     return directAgent;
@@ -419,7 +352,7 @@ const getFallbackProxyAgent = (targetUrl: string) => {
 
   logger.warn(
     {
-      targetUrl: sanitizeUrl(targetUrl),
+      targetUrl,
       fallbackProxy: sanitizeUrl(fallbackProxyUrl),
     },
     'Usando proxy de fallback após falha no PAC.',
@@ -433,22 +366,17 @@ export const resolveUndiciDispatcherFromPac = async (
   const pacUrl = process.env.PROXY_PAC_URL?.trim();
   if (!pacUrl) {
     logger.warn(
-      { targetUrl: sanitizeUrl(targetUrl) },
+      { targetUrl },
       'PROXY_PAC_URL não definido. Usando dispatcher padrão do runtime.',
     );
     return undefined;
   }
 
   const resolvedTarget = new URL(targetUrl);
-  const noProxyMatch = getNoProxyMatchForUrl(resolvedTarget);
-  if (noProxyMatch) {
+  if (hostMatchesNoProxy(resolvedTarget.hostname)) {
     logger.info(
-      {
-        targetUrl: sanitizeUrl(targetUrl),
-        hostname: resolvedTarget.hostname,
-        noProxyMatch,
-      },
-      'Bypass proxy via NO_PROXY.',
+      { targetUrl, hostname: resolvedTarget.hostname },
+      'Target em NO_PROXY. Ignorando PAC.',
     );
     return directAgent;
   }
@@ -459,7 +387,7 @@ export const resolveUndiciDispatcherFromPac = async (
     logger.warn(
       {
         pacUrl: sanitizeUrl(pacUrl),
-        targetUrl: sanitizeUrl(targetUrl),
+        targetUrl,
         error: error instanceof Error ? error.message : String(error),
       },
       'Falha ao obter resolver do PAC. Usando fallback.',
@@ -475,7 +403,7 @@ export const resolveUndiciDispatcherFromPac = async (
     logger.warn(
       {
         pacUrl: sanitizeUrl(pacUrl),
-        targetUrl: sanitizeUrl(targetUrl),
+        targetUrl,
         error: error instanceof Error ? error.message : String(error),
       },
       'Falha ao executar PAC. Usando fallback.',
@@ -485,7 +413,7 @@ export const resolveUndiciDispatcherFromPac = async (
 
   if (!pacResultValue) {
     logger.warn(
-      { pacUrl: sanitizeUrl(pacUrl), targetUrl: sanitizeUrl(targetUrl) },
+      { pacUrl: sanitizeUrl(pacUrl), targetUrl },
       'PAC retornou vazio. Usando fallback.',
     );
     return getFallbackProxyAgent(targetUrl);
@@ -515,7 +443,7 @@ export const resolveUndiciDispatcherFromPac = async (
   }
 
   logger.warn(
-    { targetUrl: sanitizeUrl(targetUrl) },
+    { targetUrl },
     'PAC sem diretivas úteis. Usando fallback.',
   );
   return getFallbackProxyAgent(targetUrl);
@@ -526,6 +454,4 @@ export const __test__ = {
   normalizePac,
   createPacResolverFromScript,
   parseDirective,
-  parseNoProxyEnv,
-  matchesNoProxy,
 };
