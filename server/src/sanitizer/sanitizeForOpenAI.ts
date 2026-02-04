@@ -13,156 +13,117 @@ export type SanitizeStats = {
 
 type SanitizeOptions = {
   allowList: Set<string>;
-  maxStringLength: number;
-  maxStackTraceLength: number;
   maxJsonDepth: number;
   maxPayloadBytes?: number;
   stats: SanitizeStats;
 };
 
-const DEFAULT_MAX_STRING_LENGTH = 500;
-const DEFAULT_MAX_STACKTRACE_LENGTH = 400;
 const DEFAULT_MAX_JSON_DEPTH = 2;
 
-const SENSITIVE_FIELD_MARKERS = [
-  'nome',
+const SENSITIVE_FIELD_NAMES = [
   'cpf',
+  'cpfcnpj',
+  'cnpj',
+  'documento',
+  'numdocumento',
   'rg',
-  'email',
-  'telefone',
-  'tel',
-  'celular',
-  'endereco',
-  'logradouro',
-  'bairro',
-  'cep',
-  'cidade',
-  'uf',
-  'conta',
-  'agencia',
-  'banco',
-  'operacao',
-  'cartao',
-  'boleto',
+  'pis',
+  'nit',
   'token',
-  'bearer',
   'authorization',
-  'senha',
-  'pass',
+  'auth',
+  'apikey',
+  'api_key',
   'secret',
+  'senha',
+  'password',
   'key',
-  'rsa',
-  'sha',
-  'usuario',
-  'matricula',
   'username',
-  'solicitante',
-  'correspondente',
-  'ip',
+  'login',
+  'email',
+  'sharsakey',
+  'hashassinatura',
+  'assinatura',
+  'sessionid',
+  'session_id',
+  'cookies',
+  'dados',
+  'arquivo',
+  'anexo',
+  'pdf',
+  'base64',
+  'imagem',
+  'boletobase64',
+  'conteudo',
+  'content',
+  'payloadbase64',
 ];
 
 const DES_ENVIO_FIELD = 'desenvio';
 const DES_RETORNO_FIELD = 'desretorno';
 
-const looksLikeJwt = (value: string): boolean => {
-  if (value.length < 80) return false;
-  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
-};
+const URL_FIELD_NAMES = ['url', 'urlservico', 'endpoint', 'targeturl'];
 
-const looksLikeBase64 = (value: string): boolean => {
-  if (value.length < 200) return false;
-  const sanitized = value.replace(/[\r\n]/g, '');
-  if (/^[A-Za-z0-9+/]+={0,2}$/.test(sanitized)) return true;
-  return /^[A-Za-z0-9_-]+$/.test(sanitized);
-};
+const BASE64_PREFIXES = ['JVBERi0x', '/9j/', 'iVBORw0KG', 'UEsDB'];
+const BASE64_RATIO_THRESHOLD = 0.9;
+const LARGE_BASE64_MIN_LENGTH = 2000;
 
-const looksLikeHexBlob = (value: string): boolean => {
-  if (value.length < 64) return false;
-  return /^[A-Fa-f0-9]+$/.test(value);
-};
-
-const looksLikePem = (value: string): boolean => value.includes('-----BEGIN ') || value.includes('PRIVATE KEY');
-
-const looksLikeJson = (value: string) => {
+const looksLikeJson = (value: string): boolean => {
   const trimmed = value.trim();
   return trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"{') || trimmed.startsWith('"[');
 };
 
-const stripNonInformationalChars = (value: string): string => {
-  return value.replace(/[{}\[\],"]/g, '').replace(/\s+/g, '').trim();
+const normalizedSensitiveFields = new Set(SENSITIVE_FIELD_NAMES.map((name) => normalizeFieldName(name)));
+const normalizedUrlFields = new Set(URL_FIELD_NAMES.map((name) => normalizeFieldName(name)));
+
+const hasSensitiveDigits = (value: string): boolean => {
+  const cpfRegex = /(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/;
+  const cnpjRegex = /(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{14})/;
+  return cpfRegex.test(value) || cnpjRegex.test(value);
 };
 
-const sanitizeJsonStringByRegex = (value: string, allowList: Set<string>): string => {
-  const markerPattern = SENSITIVE_FIELD_MARKERS.join('|');
-  const sensitiveFieldRegex = new RegExp(
-    `"([^"]+)"\\s*:\\s*("([^"\\\\]|\\\\.)*"|\\d+|true|false|null)`,
-    'gi',
-  );
-  const sanitized = value.replace(sensitiveFieldRegex, (match, key, rawValue) => {
-    const normalizedKey = normalizeFieldName(key) ?? '';
-    const isSensitive = normalizedKey
-      ? SENSITIVE_FIELD_MARKERS.some((marker) => normalizedKey.includes(marker))
-      : false;
-    if (!normalizedKey || (!allowList.has(normalizedKey) && !isSensitive)) {
-      if (typeof rawValue === 'string' && rawValue.startsWith('"')) {
-        const innerValue = rawValue.slice(1, -1).trim();
-        if (innerValue.startsWith('{') || innerValue.startsWith('[')) {
-          return match;
-        }
-      }
-      return `"${key}":"[REMOVIDO]"`;
-    }
-    if (isSensitive) {
-      return `"${key}":"[REMOVIDO]"`;
-    }
-    return match;
-  });
-  return stripNonInformationalChars(sanitized);
+const looksLikeLargeBase64 = (value: string): boolean => {
+  if (BASE64_PREFIXES.some((prefix) => value.startsWith(prefix))) return true;
+  if (value.length <= LARGE_BASE64_MIN_LENGTH) return false;
+  const sanitized = value.replace(/[\r\n]/g, '');
+  if (!sanitized) return false;
+  const match = sanitized.match(/[A-Za-z0-9+/=]/g);
+  const ratio = (match?.length ?? 0) / sanitized.length;
+  return ratio >= BASE64_RATIO_THRESHOLD;
 };
+
+const normalizeSpaces = (value: string): string => value.replace(/ {2,}/g, ' ');
 
 const isSensitiveFieldName = (fieldNorm: string): boolean => {
-  return SENSITIVE_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
+  if (!fieldNorm) return false;
+  return Array.from(normalizedSensitiveFields).some((marker) => fieldNorm.includes(marker));
 };
 
-const summarizeStackTrace = (value: string, maxLength: number): string | undefined => {
-  const firstLine = value.split('\n')[0]?.trim();
-  const base = firstLine && firstLine.length > 0 ? firstLine : value.trim();
-  if (!base) return undefined;
-  if (base.length <= maxLength) return base;
-  return `${base.slice(0, maxLength)}...(resumo)`;
+const isUrlFieldName = (fieldNorm: string): boolean => {
+  if (!fieldNorm) return false;
+  if (normalizedUrlFields.has(fieldNorm)) return true;
+  return fieldNorm.includes('url');
 };
 
-const sanitizeString = (
-  fieldNorm: string,
-  value: string,
-  options: SanitizeOptions,
-): unknown => {
-  const isJsonLike = looksLikeJson(value);
-  if (isJsonLike) {
-    options.stats.parsedJson += 1;
-    const sanitizedJson = sanitizeJsonStringByRegex(value, options.allowList);
-    if (sanitizedJson.length > options.maxStringLength) {
-      options.stats.removedLarge += 1;
-      return undefined;
+const sanitizeUrlValue = (value: string): string | undefined => {
+  try {
+    const url = new URL(value);
+    const params = Array.from(url.searchParams.entries());
+    params.forEach(([name, paramValue]) => {
+      const normalizedName = normalizeFieldName(name);
+      const isSensitive = isSensitiveFieldName(normalizedName);
+      const hasSensitiveValue = hasSensitiveDigits(paramValue);
+      if (isSensitive || hasSensitiveValue) {
+        url.searchParams.delete(name);
+      }
+    });
+    if (url.searchParams.toString().length === 0) {
+      url.search = '';
     }
-    return sanitizedJson;
-  }
-
-  if (looksLikePem(value) || looksLikeJwt(value) || looksLikeBase64(value) || looksLikeHexBlob(value)) {
-    options.stats.removedLarge += 1;
+    return url.toString();
+  } catch {
     return undefined;
   }
-
-  if (fieldNorm.includes('stacktrace')) {
-    return summarizeStackTrace(value, options.maxStackTraceLength);
-  }
-
-  if (value.length > options.maxStringLength) {
-    options.stats.removedLarge += 1;
-    return undefined;
-  }
-
-  return value;
 };
 
 const sanitizeArray = (
@@ -172,17 +133,12 @@ const sanitizeArray = (
 ): unknown[] | undefined => {
   const sanitizedItems = value
     .map((item) => sanitizeAny(item, options, fieldNorm))
-    .filter((item) => {
-      if (item === undefined || item === null) return false;
-      if (Array.isArray(item)) return item.length > 0;
-      if (typeof item === 'object') return Object.keys(item as Record<string, unknown>).length > 0;
-      return true;
-    });
+    .filter((item) => item !== undefined);
   if (sanitizedItems.length === 0) return undefined;
   return sanitizedItems;
 };
 
-export const sanitizeAny = (
+export const sanitizeDeepDelete = (
   input: unknown,
   options: SanitizeOptions,
   fieldName?: string,
@@ -192,67 +148,96 @@ export const sanitizeAny = (
   }
 
   if (input && typeof input === 'object') {
-    return Object.entries(input as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, value]) => {
-      const normalizedName = normalizeFieldName(key);
-      if (!normalizedName) return acc;
-      options.stats.totalKeys += 1;
-      if (isSensitiveFieldName(normalizedName)) {
-        options.stats.removedSensitive += 1;
+    const sanitizedObject = Object.entries(input as Record<string, unknown>).reduce<Record<string, unknown>>(
+      (acc, [key, value]) => {
+        const normalizedName = normalizeFieldName(key);
+        if (!normalizedName) return acc;
+        options.stats.totalKeys += 1;
+        if (isSensitiveFieldName(normalizedName)) {
+          options.stats.removedSensitive += 1;
+          return acc;
+        }
+
+        const sanitizedValue = sanitizeDeepDelete(value, options, normalizedName);
+        if (sanitizedValue === undefined) {
+          return acc;
+        }
+
+        const isAllowlisted = options.allowList.has(normalizedName);
+        const isObject = sanitizedValue && typeof sanitizedValue === 'object' && !Array.isArray(sanitizedValue);
+        const isArray = Array.isArray(sanitizedValue);
+        const hasNestedContent = isArray
+          ? sanitizedValue.length > 0
+          : isObject
+            ? Object.keys(sanitizedValue as Record<string, unknown>).length > 0
+            : false;
+
+        if (!isAllowlisted && !hasNestedContent) {
+          options.stats.removedNotAllowlisted += 1;
+          return acc;
+        }
+
+        if (isObject && Object.keys(sanitizedValue as Record<string, unknown>).length === 0) {
+          return acc;
+        }
+
+        if (isArray && sanitizedValue.length === 0) {
+          return acc;
+        }
+
+        acc[key] = sanitizedValue;
+        options.stats.keptKeys += 1;
         return acc;
-      }
-
-      const sanitizedValue = sanitizeAny(value, options, normalizedName);
-      if (sanitizedValue === undefined) {
-        options.stats.removedLarge += 1;
-        return acc;
-      }
-
-      const isAllowlisted = options.allowList.has(normalizedName);
-      const isObject = sanitizedValue && typeof sanitizedValue === 'object' && !Array.isArray(sanitizedValue);
-      const isArray = Array.isArray(sanitizedValue);
-      const hasNestedContent = isArray
-        ? sanitizedValue.length > 0
-        : isObject
-          ? Object.keys(sanitizedValue as Record<string, unknown>).length > 0
-          : false;
-
-      if (!isAllowlisted && !hasNestedContent) {
-        options.stats.removedNotAllowlisted += 1;
-        return acc;
-      }
-
-      if (isObject && Object.keys(sanitizedValue as Record<string, unknown>).length === 0) {
-        options.stats.removedLarge += 1;
-        return acc;
-      }
-
-      if (isArray && sanitizedValue.length === 0) {
-        options.stats.removedLarge += 1;
-        return acc;
-      }
-
-      acc[key] = sanitizedValue;
-      options.stats.keptKeys += 1;
-      return acc;
-    }, {});
+      },
+      {},
+    );
+    if (Object.keys(sanitizedObject).length === 0) return undefined;
+    return sanitizedObject;
   }
 
   if (typeof input === 'string') {
     const normalizedName = fieldName ? normalizeFieldName(fieldName) : '';
     if (normalizedName === DES_ENVIO_FIELD || normalizedName === DES_RETORNO_FIELD) {
-      if (looksLikeJson(input)) {
-        options.stats.parsedJson += 1;
-        return sanitizeJsonStringByRegex(input, options.allowList);
+      if (!looksLikeJson(input)) {
+        options.stats.removedLarge += 1;
+        return undefined;
       }
-      const fallback =
-        normalizedName === DES_ENVIO_FIELD ? { envio_nao_parseavel: true } : { retorno_nao_parseavel: true };
-      return sanitizeAny(fallback, options, normalizedName);
+      try {
+        const parsed = JSON.parse(input);
+        options.stats.parsedJson += 1;
+        return sanitizeDeepDelete(parsed, options, normalizedName);
+      } catch {
+        options.stats.removedLarge += 1;
+        return undefined;
+      }
     }
-    return sanitizeString(normalizedName, input, options);
+
+    if (isUrlFieldName(normalizedName)) {
+      const sanitizedUrl = sanitizeUrlValue(input);
+      if (!sanitizedUrl) {
+        options.stats.removedSensitive += 1;
+        return undefined;
+      }
+      return normalizeSpaces(sanitizedUrl);
+    }
+
+    if (hasSensitiveDigits(input)) {
+      options.stats.removedSensitive += 1;
+      return undefined;
+    }
+
+    if (looksLikeLargeBase64(input)) {
+      options.stats.removedLarge += 1;
+      return undefined;
+    }
+
+    return normalizeSpaces(input);
   }
 
   return input;
 };
+
+export const sanitizeAny = sanitizeDeepDelete;
 
 export const sanitizeForOpenAI = (
   input: unknown,
@@ -276,14 +261,16 @@ export const sanitizeForOpenAI = (
 
   const sanitizeOptions: SanitizeOptions = {
     allowList,
-    maxStringLength: options?.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
-    maxStackTraceLength: options?.maxStackTraceLength ?? DEFAULT_MAX_STACKTRACE_LENGTH,
     maxJsonDepth: options?.maxJsonDepth ?? DEFAULT_MAX_JSON_DEPTH,
     maxPayloadBytes: options?.maxPayloadBytes,
     stats,
   };
 
   let sanitizedJson = sanitizeAny(input, sanitizeOptions);
+
+  if (sanitizedJson === undefined) {
+    sanitizedJson = {};
+  }
 
   if (sanitizeOptions.maxPayloadBytes && sanitizedJson) {
     const reduced = applyPayloadBudget(sanitizedJson, sanitizeOptions.maxPayloadBytes);
