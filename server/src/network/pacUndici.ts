@@ -3,6 +3,7 @@ import { createPacResolver } from 'pac-resolver';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
 import { logger } from '../logger';
+import { getActivePacUrl } from './pacWindows';
 
 type PacResolver = (url: string, host: string) => string | Promise<string>;
 
@@ -363,7 +364,7 @@ const getFallbackProxyAgent = (targetUrl: string) => {
 export const resolveUndiciDispatcherFromPac = async (
   targetUrl: string,
 ): Promise<Dispatcher | undefined> => {
-  const pacUrl = process.env.PROXY_PAC_URL?.trim();
+  const pacUrl = getActivePacUrl();
   if (!pacUrl) {
     logger.warn(
       { targetUrl },
