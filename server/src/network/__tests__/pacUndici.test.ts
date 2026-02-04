@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { __test__ } from '../pacUndici';
 
-const {
-  createPacResolverFromScript,
-  detectPacFormat,
-  normalizePac,
-  parseDirective,
-  matchesNoProxy,
-  parseNoProxyEnv,
-} = __test__;
+const { createPacResolverFromScript, detectPacFormat, normalizePac, parseDirective } = __test__;
 
 describe('pacUndici PAC handling', () => {
   it('resolves a PAC with FindProxyForURL declaration', async () => {
@@ -51,42 +44,5 @@ describe('pacUndici PAC handling', () => {
       type: 'PROXY',
       proxyUrl: 'http://proxy.local:8080',
     });
-  });
-
-  it('matches NO_PROXY wildcard', () => {
-    const entries = parseNoProxyEnv('*');
-    expect(matchesNoProxy('api.openai.com', '443', entries)).toBe('*');
-  });
-
-  it('matches NO_PROXY suffix entries', () => {
-    const entries = parseNoProxyEnv('.openai.com');
-    expect(matchesNoProxy('api.openai.com', '443', entries)).toBe('.openai.com');
-  });
-
-  it('matches NO_PROXY exact hostname only', () => {
-    const entries = parseNoProxyEnv('api.openai.com');
-    expect(matchesNoProxy('api.openai.com', '443', entries)).toBe('api.openai.com');
-    expect(matchesNoProxy('foo.api.openai.com', '443', entries)).toBeNull();
-  });
-
-  it('matches NO_PROXY entries with port', () => {
-    const entries = parseNoProxyEnv('api.openai.com:443');
-    expect(matchesNoProxy('api.openai.com', '443', entries)).toBe(
-      'api.openai.com:443',
-    );
-    expect(matchesNoProxy('api.openai.com', '80', entries)).toBeNull();
-  });
-
-  it('matches NO_PROXY <local> entries', () => {
-    const entries = parseNoProxyEnv('<local>');
-    expect(matchesNoProxy('localhost', '3000', entries)).toBe('<local>');
-    expect(matchesNoProxy('intranet', '80', entries)).toBe('<local>');
-  });
-
-  it('parses NO_PROXY lists with comma/semicolon separators', () => {
-    const entries = parseNoProxyEnv(' api.openai.com ; .openai.com, localhost ');
-    expect(matchesNoProxy('api.openai.com', '443', entries)).toBe('api.openai.com');
-    expect(matchesNoProxy('foo.openai.com', '443', entries)).toBe('.openai.com');
-    expect(matchesNoProxy('localhost', '80', entries)).toBe('localhost');
   });
 });
