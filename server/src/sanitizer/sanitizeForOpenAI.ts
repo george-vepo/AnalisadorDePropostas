@@ -88,23 +88,36 @@ const looksLikeJson = (value: string) => {
   return trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"{') || trimmed.startsWith('"[');
 };
 
-const tryParseJsonString = (value: string, maxDepth: number): { parsed: unknown } | null => {
-  let current: unknown = value;
-  for (let attempt = 0; attempt < maxDepth; attempt += 1) {
-    if (typeof current !== 'string') return null;
-    if (!looksLikeJson(current)) return null;
-    try {
-      const parsed = JSON.parse(current);
-      if (typeof parsed === 'string') {
-        current = parsed;
-        continue;
+const stripNonInformationalChars = (value: string): string => {
+  return value.replace(/[{}\[\],"]/g, '').replace(/\s+/g, '').trim();
+};
+
+const sanitizeJsonStringByRegex = (value: string, allowList: Set<string>): string => {
+  const markerPattern = SENSITIVE_FIELD_MARKERS.join('|');
+  const sensitiveFieldRegex = new RegExp(
+    `"([^"]+)"\\s*:\\s*("([^"\\\\]|\\\\.)*"|\\d+|true|false|null)`,
+    'gi',
+  );
+  const sanitized = value.replace(sensitiveFieldRegex, (match, key, rawValue) => {
+    const normalizedKey = normalizeFieldName(key) ?? '';
+    const isSensitive = normalizedKey
+      ? SENSITIVE_FIELD_MARKERS.some((marker) => normalizedKey.includes(marker))
+      : false;
+    if (!normalizedKey || (!allowList.has(normalizedKey) && !isSensitive)) {
+      if (typeof rawValue === 'string' && rawValue.startsWith('"')) {
+        const innerValue = rawValue.slice(1, -1).trim();
+        if (innerValue.startsWith('{') || innerValue.startsWith('[')) {
+          return match;
+        }
       }
-      return { parsed };
-    } catch {
-      return null;
+      return `"${key}":"[REMOVIDO]"`;
     }
-  }
-  return null;
+    if (isSensitive) {
+      return `"${key}":"[REMOVIDO]"`;
+    }
+    return match;
+  });
+  return stripNonInformationalChars(sanitized);
 };
 
 const isSensitiveFieldName = (fieldNorm: string): boolean => {
@@ -124,10 +137,15 @@ const sanitizeString = (
   value: string,
   options: SanitizeOptions,
 ): unknown => {
-  const parsed = tryParseJsonString(value, options.maxJsonDepth);
-  if (parsed) {
+  const isJsonLike = looksLikeJson(value);
+  if (isJsonLike) {
     options.stats.parsedJson += 1;
-    return sanitizeAny(parsed.parsed, options, fieldNorm);
+    const sanitizedJson = sanitizeJsonStringByRegex(value, options.allowList);
+    if (sanitizedJson.length > options.maxStringLength) {
+      options.stats.removedLarge += 1;
+      return undefined;
+    }
+    return sanitizedJson;
   }
 
   if (looksLikePem(value) || looksLikeJwt(value) || looksLikeBase64(value) || looksLikeHexBlob(value)) {
@@ -222,10 +240,9 @@ export const sanitizeAny = (
   if (typeof input === 'string') {
     const normalizedName = fieldName ? normalizeFieldName(fieldName) : '';
     if (normalizedName === DES_ENVIO_FIELD || normalizedName === DES_RETORNO_FIELD) {
-      const parsed = tryParseJsonString(input, options.maxJsonDepth);
-      if (parsed) {
+      if (looksLikeJson(input)) {
         options.stats.parsedJson += 1;
-        return sanitizeAny(parsed.parsed, options, normalizedName);
+        return sanitizeJsonStringByRegex(input, options.allowList);
       }
       const fallback =
         normalizedName === DES_ENVIO_FIELD ? { envio_nao_parseavel: true } : { retorno_nao_parseavel: true };

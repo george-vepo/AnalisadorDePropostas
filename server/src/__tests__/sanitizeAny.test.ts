@@ -35,18 +35,17 @@ describe('sanitizeForOpenAI', () => {
 
     const result = sanitizeForOpenAI(payload, allowList);
     const sanitized = result.sanitizedJson as Record<string, unknown>;
-    const envio = sanitized.DES_ENVIO as Record<string, unknown>;
-    const retorno = sanitized.DES_RETORNO as Record<string, unknown>;
+    const envio = sanitized.DES_ENVIO as string;
+    const retorno = sanitized.DES_RETORNO as string;
 
-    expect(envio.status).toBe('OK');
-    expect((envio as { cpf?: string }).cpf).toBeUndefined();
-    const envioDados = envio.dados as Record<string, unknown>;
-    expect(envioDados.codigo).toBe('X1');
-    expect((envioDados as { token?: string }).token).toBeUndefined();
+    expect(envio).toContain('status:OK');
+    expect(envio).toContain('codigo:X1');
+    expect(envio).not.toContain('cpf:11122233344');
+    expect(envio).not.toContain('token:abc');
 
-    expect(retorno.sucesso).toBe(true);
-    expect(retorno.descricao).toBe('ok');
-    expect((retorno as { cpf?: string }).cpf).toBeUndefined();
+    expect(retorno).toContain('sucesso:true');
+    expect(retorno).toContain('descricao:ok');
+    expect(retorno).not.toContain('cpf:00011122233');
   });
 
   it('keeps payload under the configured limit', () => {
