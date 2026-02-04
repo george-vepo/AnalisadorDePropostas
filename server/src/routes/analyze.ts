@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { performance } from 'node:perf_hooks';
-import { fetchAnalysesFromDb, SqlTimeoutError } from '../analysisData';
+import { fetchAnalysisFromDb, SqlTimeoutError } from '../analysisData';
 import { getConfig } from '../config/loadConfig';
 import { filterPayloadByPaths, normalize } from '../normalizer';
 import { analyzeWithOpenAIText } from '../openaiClient';
@@ -133,21 +133,6 @@ analyzeRouter.post('/analyze', async (req, res) => {
     );
   }
 
-  let analysisData;
-  try {
-    analysisData = await fetchAnalysesFromDb(codPropostas);
-  } catch (error) {
-    if (error instanceof SqlTimeoutError) {
-      incrementError();
-      return res.status(504).json(buildErrorResponse('Timeout no SQL', error.message));
-    }
-    const details = error instanceof Error ? error.message : 'Erro desconhecido ao consultar o banco.';
-    incrementError();
-    return res.status(500).json(buildErrorResponse('Falha ao consultar o banco', details));
-  }
-
-  logStage('dbFetch', analysisData.elapsedMs);
-
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     incrementError();
@@ -155,16 +140,28 @@ analyzeRouter.post('/analyze', async (req, res) => {
   }
 
   const maxOpenAiBytes = Number(process.env.MAX_OPENAI_INPUT_BYTES ?? 150000);
-  const byProposta = new Map(analysisData.items.map((item) => [item.codigoProposta, item]));
 
   const results = [];
   for (const codProposta of codPropostas) {
-    const dbItem = byProposta.get(codProposta);
-
-    if (!dbItem) {
+    let dbItem: { resultadoJson: Record<string, unknown> };
+    try {
+      const analysisData = await fetchAnalysisFromDb(codProposta);
+      logStage('dbFetch', analysisData.elapsedMs);
+      dbItem = { resultadoJson: analysisData.data };
+    } catch (error) {
+      if (error instanceof SqlTimeoutError) {
+        incrementError();
+        results.push({
+          codigoProposta: codProposta,
+          error: { message: 'Timeout no SQL', details: error.message },
+        });
+        continue;
+      }
+      const details = error instanceof Error ? error.message : 'Erro desconhecido ao consultar o banco.';
+      incrementError();
       results.push({
         codigoProposta: codProposta,
-        error: { message: 'Proposta não encontrada no banco.' },
+        error: { message: 'Falha ao consultar o banco', details },
       });
       continue;
     }
