@@ -481,9 +481,17 @@ export const analyzeWithOpenAIText = async (
   apiKey: string,
   requestOptions: OpenAIRequestOptions,
 ): Promise<{ text: string; raw: unknown }> => {
-  const dataJson = JSON.stringify(sanitizedPayload, null, 2);
+  const formatProposalNumber = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed) return trimmed;
+    if (trimmed.includes('-')) return trimmed;
+    if (trimmed.length === 1) return trimmed;
+    return `${trimmed.slice(0, -1)}-${trimmed.slice(-1)}`;
+  };
+  const formattedProposalNumber = formatProposalNumber(proposalNumber);
+  const dataJson = JSON.stringify(sanitizedPayload);
   const userPrompt = renderTemplate(config.userPromptTemplate, {
-    proposalNumber,
+    proposalNumber: formattedProposalNumber,
     dataJson,
   });
   const requestBody = buildRequestBody(config, userPrompt);
