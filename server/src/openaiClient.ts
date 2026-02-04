@@ -3,6 +3,7 @@ import path from "node:path";
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
 import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
+import { notePacNetworkError } from "./network/pacWindows";
 
 type OpenAIConfig = {
   model: string;
@@ -439,6 +440,9 @@ const postOpenAIWithRetry = async (
     } catch (error) {
       lastError = error;
       const retryableNetwork = isRetryableNetworkError(error);
+      if (retryableNetwork && config.proxy === "pac") {
+        notePacNetworkError(error);
+      }
 
       if (attempt >= options.maxRetries) {
         logger.error(

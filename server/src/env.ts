@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from './logger';
 import { initPacProxyFromEnv } from './network/pacDispatcher';
+import { initPacDiscovery } from './network/pacWindows';
 import { initNetworkFromEnv } from './network/proxy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,8 @@ if (result.error) {
     'Falha ao carregar .env no bootstrap.',
   );
 }
+
+await initPacDiscovery(logger);
 
 const pacEnabled = initPacProxyFromEnv(logger);
 logger.info(
