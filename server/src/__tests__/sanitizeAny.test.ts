@@ -5,13 +5,15 @@ import { normalizeFieldName } from '../sanitizer/normalizeFieldName';
 const buildAllowList = (names: string[]) => new Set(names.map((name) => normalizeFieldName(name)));
 
 describe('sanitizeForOpenAI', () => {
-  it('removes fields when strings contain CPF digits', () => {
+  it('masks CPF digits inside strings without removing the field', () => {
     const allowList = buildAllowList(['mensagem']);
     const payload = { mensagem: 'Não foi encontrado os dados para o CPF:14028002664' };
 
     const result = sanitizeForOpenAI(payload, allowList);
 
-    expect(result.sanitizedJson).toEqual({});
+    expect(result.sanitizedJson).toEqual({
+      mensagem: 'Não foi encontrado os dados para o CPF:***********',
+    });
   });
 
   it('normalizes only multiple spaces while preserving single spaces', () => {
@@ -52,5 +54,45 @@ describe('sanitizeForOpenAI', () => {
     const result = sanitizeForOpenAI(payload, allowList);
 
     expect(result.sanitizedJson).toEqual({});
+  });
+
+  it('keeps large DES_ENVIO strings intact while masking CPFs', () => {
+    const allowList = buildAllowList(['DES_ENVIO']);
+    const text = `Inicio ${'á'.repeat(100000)} CPF 14028002664 fim ${'B'.repeat(100000)}`;
+    const payload = { DES_ENVIO: text };
+
+    const result = sanitizeForOpenAI(payload, allowList);
+    const sanitized = result.sanitizedJson as typeof payload;
+
+    expect(sanitized.DES_ENVIO).toContain('CPF ***********');
+    expect(sanitized.DES_ENVIO).not.toContain('14028002664');
+    expect(sanitized.DES_ENVIO).not.toContain('TRUNCATED');
+    expect(sanitized.DES_ENVIO.length).toBe(text.length);
+  });
+
+  it('truncates arrays with metadata when exceeding maxArrayItems', () => {
+    const allowList = buildAllowList(['itens', 'id']);
+    const payload = { itens: Array.from({ length: 500 }, (_, index) => ({ id: index })) };
+
+    const result = sanitizeForOpenAI(payload, allowList, { maxArrayItems: 50 });
+    const sanitized = result.sanitizedJson as any;
+
+    expect(sanitized.itens.__meta).toEqual({
+      arrayTruncated: true,
+      originalLength: 500,
+      kept: 50,
+    });
+    expect(sanitized.itens.items).toHaveLength(50);
+    expect(sanitized.itens.items[0]).toEqual({ id: 0 });
+  });
+
+  it('replaces deep objects beyond maxDepth with a placeholder', () => {
+    const allowList = buildAllowList(['nivel1', 'nivel2']);
+    const payload = { nivel1: { nivel2: { nivel3: { valor: 'x' } } } };
+
+    const result = sanitizeForOpenAI(payload, allowList, { maxDepth: 2 });
+    const sanitized = result.sanitizedJson as any;
+
+    expect(sanitized.nivel1.nivel2.nivel3).toBe('<DEPTH_LIMIT_REACHED>');
   });
 });

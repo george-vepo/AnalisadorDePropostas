@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { performance } from 'node:perf_hooks';
 import { fetchAnalysesFromDb, SqlTimeoutError } from '../analysisData';
 import { getConfig } from '../config/loadConfig';
-import { normalize } from '../normalizer';
+import { filterPayloadByPaths, normalize } from '../normalizer';
 import { analyzeWithOpenAIText } from '../openaiClient';
 import { applyPayloadBudget } from '../payloadBudget';
 import { getAllowListSet, sanitizeForOpenAI } from '../sanitizer';
@@ -180,15 +180,16 @@ analyzeRouter.post('/analyze', async (req, res) => {
 
     const normalizeStart = performance.now();
     const normalizedPayload = normalize(dbItem.resultadoJson, configResult.config.privacy.normalizer);
+    const payloadForSanitize = filterPayloadByPaths(dbItem.resultadoJson, configResult.config.privacy.normalizer);
     const normalizeElapsed = Math.round(performance.now() - normalizeStart);
     logStage('normalize', normalizeElapsed);
 
     const sanitizeStart = performance.now();
     let sanitizedResult;
     try {
-      sanitizedResult = sanitizeForOpenAI(normalizedPayload, allowListSet, {
-        maxStringLength: Number(process.env.OPENAI_PAYLOAD_MAX_STRING ?? 500),
-        maxStackTraceLength: Number(process.env.OPENAI_PAYLOAD_MAX_STACKTRACE ?? 2000),
+      sanitizedResult = sanitizeForOpenAI(payloadForSanitize, allowListSet, {
+        maxDepth: configResult.config.privacy.normalizer.maxDepth ?? 10,
+        maxArrayItems: configResult.config.privacy.normalizer.maxArrayItems ?? 50,
         maxPayloadBytes: maxOpenAiBytes,
       });
     } catch (error) {
@@ -210,8 +211,10 @@ analyzeRouter.post('/analyze', async (req, res) => {
         codigoProposta: codProposta,
         payloadBytesBefore: toBytes(dbItem.resultadoJson),
         payloadBytesAfter: sanitizedBytes,
-        removedSensitive: sanitizedResult.stats.removedSensitive,
-        removedLarge: sanitizedResult.stats.removedLarge,
+        removedSensitive: sanitizedResult.stats.removedSensitiveCount,
+        removedBinary: sanitizedResult.stats.removedBinaryCount,
+        arraysTruncated: sanitizedResult.stats.arraysTruncatedCount,
+        depthLimited: sanitizedResult.stats.depthLimitedCount,
         removedNotAllowlisted: sanitizedResult.stats.removedNotAllowlisted,
         totalKeys: sanitizedResult.stats.totalKeys,
         keptKeys: sanitizedResult.stats.keptKeys,
