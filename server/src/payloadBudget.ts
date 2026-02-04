@@ -26,23 +26,18 @@ const collectArraysAndStrings = (
   value: unknown,
   path: PathSegment[],
   arrays: PathEntry[],
-  strings: PathEntry[],
 ) => {
   if (Array.isArray(value)) {
     arrays.push({ path, size: toBytes(value) });
-    value.forEach((item, index) => collectArraysAndStrings(item, [...path, index], arrays, strings));
+    value.forEach((item, index) => collectArraysAndStrings(item, [...path, index], arrays));
     return;
   }
 
   if (value && typeof value === 'object') {
     Object.entries(value).forEach(([key, child]) => {
-      collectArraysAndStrings(child, [...path, key], arrays, strings);
+      collectArraysAndStrings(child, [...path, key], arrays);
     });
     return;
-  }
-
-  if (typeof value === 'string') {
-    strings.push({ path, size: value.length });
   }
 };
 
@@ -65,8 +60,7 @@ export const applyPayloadBudget = (payload: unknown, maxBytes: number): PayloadB
   }
 
   const arrays: PathEntry[] = [];
-  const strings: PathEntry[] = [];
-  collectArraysAndStrings(cloned, [], arrays, strings);
+  collectArraysAndStrings(cloned, [], arrays);
 
   arrays.sort((a, b) => b.size - a.size);
   for (const entry of arrays) {
@@ -74,20 +68,6 @@ export const applyPayloadBudget = (payload: unknown, maxBytes: number): PayloadB
     if (Array.isArray(current) && current.length > 0) {
       setValueAtPath(cloned, entry.path, []);
       arraysRemoved += 1;
-      bytes = toBytes(cloned);
-      if (bytes <= maxBytes) {
-        return { payload: cloned, bytes, arraysRemoved, stringsTrimmed, exceeded: false };
-      }
-    }
-  }
-
-  strings.sort((a, b) => b.size - a.size);
-  for (const entry of strings) {
-    const current = getValueAtPath(cloned, entry.path);
-    if (typeof current === 'string' && current.length > 0) {
-      const trimmed = current.slice(0, 200);
-      setValueAtPath(cloned, entry.path, `${trimmed}…[truncado]`);
-      stringsTrimmed += 1;
       bytes = toBytes(cloned);
       if (bytes <= maxBytes) {
         return { payload: cloned, bytes, arraysRemoved, stringsTrimmed, exceeded: false };
