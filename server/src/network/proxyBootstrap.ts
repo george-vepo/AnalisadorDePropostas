@@ -1,38 +1,51 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Agent, ProxyAgent, setGlobalDispatcher, type Dispatcher } from 'undici';
-import { createPacResolver } from 'pac-resolver';
 
-type LoggerLike = {
+export type LoggerLike = {
   info: (obj: Record<string, unknown>, msg: string) => void;
   warn: (obj: Record<string, unknown>, msg: string) => void;
 };
 
+type RegistryBranch = 'user' | 'policy';
+
 type RegistryProxySettings = {
+  source: RegistryBranch;
   autoConfigUrl: string | null;
   proxyEnable: number;
   proxyServer: string | null;
   autoDetect: number;
 };
 
-type NetworkStrategy = 'PAC ok' | 'PAC inválido (sem listener local)' | 'PROXY explícito' | 'DIRECT';
+type NetworkStrategy =
+  | 'PAC ok'
+  | 'PAC inválido (loopback sem listener)'
+  | 'PROXY explícito'
+  | 'DIRECT';
 
-type BootstrapNetworkResult = {
+export type StartupNetworkState = {
   strategy: NetworkStrategy;
   dispatcher: Dispatcher;
   registry: RegistryProxySettings | null;
+  directProbe?: {
+    enabled: boolean;
+    success: boolean;
+    reason: string;
+  };
 };
 
 const execFileAsync = promisify(execFile);
 const PAC_FETCH_TIMEOUT_MS = 1_500;
-const PAC_FETCH_RETRY_COUNT = 1;
 const OPENAI_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_ORIGIN_PROBE_URL = 'https://api.openai.com:443/';
 
 const directAgent = new Agent({
   connectTimeout: 10_000,
   headersTimeout: 30_000,
   bodyTimeout: 30_000,
 });
+
+let lastStartupNetworkState: StartupNetworkState | null = null;
 
 const sanitizeUrl = (value: string) => {
   try {
@@ -52,12 +65,6 @@ const isLoopbackHost = (host: string) => {
   return value === '127.0.0.1' || value === 'localhost' || value === '::1';
 };
 
-const parseErrorCode = (error: unknown) => {
-  if (!error || typeof error !== 'object') return '';
-  const anyErr = error as any;
-  return String(anyErr.code ?? anyErr.cause?.code ?? '').toUpperCase();
-};
-
 const withTimeoutSignal = (timeoutMs: number) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -67,26 +74,11 @@ const withTimeoutSignal = (timeoutMs: number) => {
   };
 };
 
-const readWindowsInternetSettings = async (): Promise<RegistryProxySettings | null> => {
-  if (process.platform !== 'win32') return null;
-
-  const script = `
-  $k = Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
-  [PSCustomObject]@{
-    AutoConfigURL = $k.AutoConfigURL
-    ProxyEnable = $k.ProxyEnable
-    ProxyServer = $k.ProxyServer
-    AutoDetect = $k.AutoDetect
-  } | ConvertTo-Json -Compress
-  `;
-
-  const { stdout } = await execFileAsync(
-    'powershell',
-    ['-NoProfile', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 },
-  );
-
-  const parsed = JSON.parse(stdout || '{}') as {
+const parseRegistryJson = (
+  rawJson: string,
+  source: RegistryBranch,
+): RegistryProxySettings => {
+  const parsed = JSON.parse(rawJson || '{}') as {
     AutoConfigURL?: string;
     ProxyEnable?: number;
     ProxyServer?: string;
@@ -94,6 +86,7 @@ const readWindowsInternetSettings = async (): Promise<RegistryProxySettings | nu
   };
 
   return {
+    source,
     autoConfigUrl: parsed.AutoConfigURL?.trim() || null,
     proxyEnable: Number(parsed.ProxyEnable ?? 0),
     proxyServer: parsed.ProxyServer?.trim() || null,
@@ -101,30 +94,47 @@ const readWindowsInternetSettings = async (): Promise<RegistryProxySettings | nu
   };
 };
 
-const fetchPacScript = async (pacUrl: string) => {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt <= PAC_FETCH_RETRY_COUNT; attempt += 1) {
-    const { signal, clear } = withTimeoutSignal(PAC_FETCH_TIMEOUT_MS);
-    try {
-      const response = await fetch(pacUrl, {
-        signal,
-        dispatcher: directAgent,
-      });
-      if (!response.ok) {
-        throw new Error(`PAC HTTP ${response.status}`);
-      }
-      const body = await response.text();
-      if (!body.trim()) {
-        throw new Error('PAC vazio');
-      }
-      return body;
-    } catch (error) {
-      lastError = error;
-    } finally {
-      clear();
-    }
+const readRegistryPath = async (
+  path: string,
+  source: RegistryBranch,
+): Promise<RegistryProxySettings | null> => {
+  const script = `$k = Get-ItemProperty -Path '${path}' -ErrorAction Stop\n` +
+    `[PSCustomObject]@{\n` +
+    `  AutoConfigURL = $k.AutoConfigURL\n` +
+    `  ProxyEnable = $k.ProxyEnable\n` +
+    `  ProxyServer = $k.ProxyServer\n` +
+    `  AutoDetect = $k.AutoDetect\n` +
+    `} | ConvertTo-Json -Compress`;
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell',
+      ['-NoProfile', '-Command', script],
+      { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 },
+    );
+
+    return parseRegistryJson(stdout, source);
+  } catch {
+    return null;
   }
-  throw lastError instanceof Error ? lastError : new Error('Falha ao baixar PAC');
+};
+
+const readWindowsInternetSettings = async (): Promise<RegistryProxySettings | null> => {
+  if (process.platform !== 'win32') return null;
+
+  const policy = await readRegistryPath(
+    'HKCU:\\Software\\Policies\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+    'policy',
+  );
+
+  if (policy && (policy.autoConfigUrl || policy.proxyEnable === 1 || policy.proxyServer)) {
+    return policy;
+  }
+
+  return readRegistryPath(
+    'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+    'user',
+  );
 };
 
 const parsePacDecision = (decision: string) => {
@@ -148,6 +158,35 @@ const parsePacDecision = (decision: string) => {
   }
 
   return { mode: 'DIRECT' as const };
+};
+
+const fetchPacScript = async (pacUrl: string) => {
+  const { signal, clear } = withTimeoutSignal(PAC_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(pacUrl, {
+      signal,
+      dispatcher: directAgent,
+    });
+    if (!response.ok) {
+      throw new Error(`PAC HTTP ${response.status}`);
+    }
+    const body = await response.text();
+    if (!body.trim()) {
+      throw new Error('PAC vazio');
+    }
+    return body;
+  } finally {
+    clear();
+  }
+};
+
+const resolvePacProxy = async (pacUrl: string): Promise<{ mode: 'DIRECT' } | { mode: 'PROXY'; proxyUrl: string }> => {
+  const pacResolverModule = await import('pac-resolver');
+  const pacScript = await fetchPacScript(pacUrl);
+  const resolver = pacResolverModule.createPacResolver(pacScript);
+  const target = new URL(OPENAI_URL);
+  const decisionRaw = await resolver(OPENAI_URL, target.hostname);
+  return parsePacDecision(String(decisionRaw ?? ''));
 };
 
 const selectProxyServerEntry = (proxyServer: string) => {
@@ -177,103 +216,144 @@ const toProxyUrl = (rawValue: string) => {
   return `http://${trimmed}`;
 };
 
-const ensureNoProxy = () => {
-  const current = process.env.NO_PROXY ?? process.env.no_proxy ?? '';
-  const entries = current
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  const mustHave = ['localhost', '127.0.0.1'];
-  if ((process.env.NO_PROXY_INCLUDE_OPENAI ?? '').trim() === '1') {
-    mustHave.push('api.openai.com');
-  }
-
-  for (const value of mustHave) {
-    if (!entries.some((entry) => entry.toLowerCase() === value.toLowerCase())) {
-      entries.push(value);
-    }
-  }
-
-  const next = entries.join(',');
-  process.env.NO_PROXY = next;
-  process.env.no_proxy = next;
-};
-
-const resolveFromPac = async (pacUrl: string, logger: LoggerLike): Promise<BootstrapNetworkResult> => {
-  const pacScript = await fetchPacScript(pacUrl);
-  const resolver = createPacResolver(pacScript);
-  const target = new URL(OPENAI_URL);
-  const decisionRaw = await resolver(OPENAI_URL, target.hostname);
-  const decision = parsePacDecision(String(decisionRaw ?? ''));
-
-  if (decision.mode === 'PROXY') {
-    const dispatcher = new ProxyAgent({ uri: decision.proxyUrl });
-    setGlobalDispatcher(dispatcher);
-    logger.info(
-      { pacUrl: sanitizeUrl(pacUrl), decision: 'PROXY', proxy: sanitizeUrl(decision.proxyUrl) },
-      'PAC ok',
-    );
-    return { strategy: 'PAC ok', dispatcher, registry: null };
-  }
-
+const setDirectDispatcher = () => {
   setGlobalDispatcher(directAgent);
-  logger.info(
-    { pacUrl: sanitizeUrl(pacUrl), decision: 'DIRECT' },
-    'PAC ok',
-  );
-  return { strategy: 'PAC ok', dispatcher: directAgent, registry: null };
+  return directAgent;
 };
 
-export const bootstrapNetwork = async (logger: LoggerLike): Promise<BootstrapNetworkResult> => {
-  ensureNoProxy();
+const maybeProbeDirectOpenAI = async (logger: LoggerLike) => {
+  if ((process.env.NETWORK_DIRECT_PROBE ?? '1').trim() !== '1') {
+    return { enabled: false, success: false, reason: 'disabled by env' };
+  }
 
+  const { signal, clear } = withTimeoutSignal(Number(process.env.NETWORK_DIRECT_PROBE_TIMEOUT_MS ?? 1500));
+  try {
+    const response = await fetch(OPENAI_ORIGIN_PROBE_URL, {
+      method: 'HEAD',
+      signal,
+      dispatcher: directAgent,
+    });
+
+    logger.info(
+      { status: response.status, target: OPENAI_ORIGIN_PROBE_URL },
+      'Probe DIRECT para api.openai.com concluído.',
+    );
+    return { enabled: true, success: true, reason: `status ${response.status}` };
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'Probe DIRECT para api.openai.com falhou.',
+    );
+    return { enabled: true, success: false, reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    clear();
+  }
+};
+
+export const getStartupNetworkState = () => lastStartupNetworkState;
+
+export const configureNetworkOnStartup = async (logger: LoggerLike): Promise<StartupNetworkState> => {
   let registry: RegistryProxySettings | null = null;
   try {
     registry = await readWindowsInternetSettings();
   } catch (error) {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
-      'Falha ao ler Internet Settings do Windows. Seguindo com DIRECT.',
+      'Falha ao ler Internet Settings/Policies do Windows.',
     );
   }
 
   if (registry?.autoConfigUrl) {
     try {
       const pacUrl = new URL(registry.autoConfigUrl);
-      const result = await resolveFromPac(pacUrl.toString(), logger);
-      return { ...result, registry };
-    } catch (error) {
-      const autoConfigUrl = registry.autoConfigUrl;
-      const isLoopbackPac = (() => {
+      if (isLoopbackHost(pacUrl.hostname) && pacUrl.port) {
+        const { signal, clear } = withTimeoutSignal(700);
         try {
-          return isLoopbackHost(new URL(autoConfigUrl).hostname);
+          await fetch(pacUrl.toString(), { method: 'HEAD', signal, dispatcher: directAgent });
+        } finally {
+          clear();
+        }
+      }
+
+      const pacDecision = await resolvePacProxy(pacUrl.toString());
+      if (pacDecision.mode === 'PROXY') {
+        const dispatcher = new ProxyAgent({ uri: pacDecision.proxyUrl });
+        setGlobalDispatcher(dispatcher);
+        const result: StartupNetworkState = {
+          strategy: 'PAC ok',
+          dispatcher,
+          registry,
+        };
+        lastStartupNetworkState = result;
+        logger.info(
+          {
+            source: registry.source,
+            autoConfigUrl: sanitizeUrl(registry.autoConfigUrl),
+            pacDecision: 'PROXY',
+            selectedProxy: sanitizeUrl(pacDecision.proxyUrl),
+          },
+          'Rede inicializada com PAC válido.',
+        );
+        return result;
+      }
+
+      const dispatcher = setDirectDispatcher();
+      const directProbe = await maybeProbeDirectOpenAI(logger);
+      const result: StartupNetworkState = {
+        strategy: 'PAC ok',
+        dispatcher,
+        registry,
+        directProbe,
+      };
+      lastStartupNetworkState = result;
+      logger.info(
+        {
+          source: registry.source,
+          autoConfigUrl: sanitizeUrl(registry.autoConfigUrl),
+          pacDecision: 'DIRECT',
+        },
+        'PAC retornou DIRECT. Mantendo conexão direta.',
+      );
+      return result;
+    } catch (error) {
+      const parsedPac = (() => {
+        try {
+          return new URL(registry.autoConfigUrl as string);
         } catch {
-          return false;
+          return null;
         }
       })();
-      const code = parseErrorCode(error);
-      const loopbackUnavailable =
-        isLoopbackPac && (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ABORT_ERR');
+      const isLoopbackPac = parsedPac ? isLoopbackHost(parsedPac.hostname) : false;
 
-      if (loopbackUnavailable) {
-        setGlobalDispatcher(directAgent);
+      if (isLoopbackPac) {
+        const dispatcher = setDirectDispatcher();
+        const directProbe = await maybeProbeDirectOpenAI(logger);
+        const result: StartupNetworkState = {
+          strategy: 'PAC inválido (loopback sem listener)',
+          dispatcher,
+          registry,
+          directProbe,
+        };
+        lastStartupNetworkState = result;
         logger.warn(
           {
-            autoConfigUrl: sanitizeUrl(autoConfigUrl),
+            source: registry.source,
+            autoConfigUrl: sanitizeUrl(registry.autoConfigUrl),
             error: error instanceof Error ? error.message : String(error),
+            action: 'DIRECT sem fallback',
           },
-          'PAC inválido (sem listener local)',
+          'PAC loopback inválido detectado. Ignorando fallback de proxy.',
         );
-        return { strategy: 'PAC inválido (sem listener local)', dispatcher: directAgent, registry };
+        return result;
       }
 
       logger.warn(
         {
-          autoConfigUrl: sanitizeUrl(autoConfigUrl),
+          source: registry.source,
+          autoConfigUrl: sanitizeUrl(registry.autoConfigUrl),
           error: error instanceof Error ? error.message : String(error),
         },
-        'Falha ao usar PAC. Avaliando proxy explícito.',
+        'Falha ao processar PAC. Avaliando ProxyServer explícito.',
       );
     }
   }
@@ -284,22 +364,45 @@ export const bootstrapNetwork = async (logger: LoggerLike): Promise<BootstrapNet
     if (proxyUrl) {
       const dispatcher = new ProxyAgent({ uri: proxyUrl });
       setGlobalDispatcher(dispatcher);
+      const result: StartupNetworkState = {
+        strategy: 'PROXY explícito',
+        dispatcher,
+        registry,
+      };
+      lastStartupNetworkState = result;
       logger.info(
         {
+          source: registry.source,
+          proxyEnable: registry.proxyEnable,
           proxyServer: registry.proxyServer,
           selectedProxy: sanitizeUrl(proxyUrl),
-          autoDetect: registry.autoDetect,
         },
-        'PROXY explícito',
+        'Rede inicializada com ProxyServer explícito.',
       );
-      return { strategy: 'PROXY explícito', dispatcher, registry };
+      return result;
     }
   }
 
-  setGlobalDispatcher(directAgent);
+  const dispatcher = setDirectDispatcher();
+  const directProbe = await maybeProbeDirectOpenAI(logger);
+  const result: StartupNetworkState = {
+    strategy: 'DIRECT',
+    dispatcher,
+    registry,
+    directProbe,
+  };
+  lastStartupNetworkState = result;
   logger.info(
-    { autoDetect: registry?.autoDetect, proxyEnable: registry?.proxyEnable },
-    'DIRECT',
+    {
+      source: registry?.source,
+      proxyEnable: registry?.proxyEnable,
+      hasAutoConfigUrl: Boolean(registry?.autoConfigUrl),
+      reason: 'ProxyEnable desativado, ProxyServer ausente, ou sem settings do Windows.',
+    },
+    'Rede inicializada em modo DIRECT.',
   );
-  return { strategy: 'DIRECT', dispatcher: directAgent, registry };
+
+  return result;
 };
+
+export const bootstrapNetwork = configureNetworkOnStartup;
