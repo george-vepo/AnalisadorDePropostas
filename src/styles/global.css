@@ -40,6 +40,7 @@ label {
 }
 
 input[type="text"],
+select,
 textarea {
   width: 100%;
   padding: 12px 14px;
@@ -100,6 +101,24 @@ button:disabled {
   margin: 0;
   font-size: 0.9rem;
   color: #64748b;
+}
+
+.context-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.context-card details {
+  color: #1e293b;
+}
+
+.context-card summary {
+  cursor: pointer;
+  font-weight: 600;
 }
 
 .result {

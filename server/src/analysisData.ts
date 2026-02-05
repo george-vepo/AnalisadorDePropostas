@@ -7,8 +7,14 @@ import { getPool, sql } from './db';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.resolve(__dirname, '../sql/analysis.sql');
 const jsonSqlPath = path.resolve(__dirname, '../sql/analysis_json.sql');
+const sensibilizacaoSqlPath = path.resolve(__dirname, '../sql/analysis_sensibilizacao.sql');
+const pagamentoSqlPath = path.resolve(__dirname, '../sql/analysis_pagamento.sql');
 const analysisSql = readFileSync(sqlPath, 'utf-8');
 const analysisJsonSql = readFileSync(jsonSqlPath, 'utf-8');
+const analysisSensibilizacaoSql = readFileSync(sensibilizacaoSqlPath, 'utf-8');
+const analysisPagamentoSql = readFileSync(pagamentoSqlPath, 'utf-8');
+
+export type AnalysisType = 'padrao' | 'sensibilizacao' | 'pagamento';
 
 export type AnalysisDataResult = {
   data: Record<string, unknown>;
@@ -163,16 +169,26 @@ const extractMultiJsonData = (recordsets: Array<Array<Record<string, unknown>>>)
   });
 };
 
+const resolveSqlByType = (analysisType: AnalysisType | undefined) => {
+  if (analysisType === 'sensibilizacao') return analysisSensibilizacaoSql;
+  if (analysisType === 'pagamento') return analysisPagamentoSql;
+  return analysisJsonSql;
+};
+
 const executeRecordsetsQuery = async (codProposta: string, pool: Awaited<ReturnType<typeof getPool>>) => {
   return executeQueryWithRetry(analysisSql, codProposta, pool);
 };
 
-export const fetchAnalysisFromDb = async (codProposta: string): Promise<AnalysisDataResult> => {
+export const fetchAnalysisFromDb = async (
+  codProposta: string,
+  analysisType: AnalysisType = 'padrao',
+): Promise<AnalysisDataResult> => {
   const startedAt = performance.now();
   const pool = await getPool();
+  const sqlText = resolveSqlByType(analysisType);
 
   try {
-    const recordsets = await executeQueryWithRetry(analysisJsonSql, codProposta, pool);
+    const recordsets = await executeQueryWithRetry(sqlText, codProposta, pool);
     const data = extractJsonData(recordsets);
     const elapsedMs = Math.round(performance.now() - startedAt);
 
@@ -202,12 +218,16 @@ export const fetchAnalysisFromDb = async (codProposta: string): Promise<Analysis
   }
 };
 
-export const fetchAnalysesFromDb = async (codPropostas: string[]): Promise<MultiAnalysisDataResult> => {
+export const fetchAnalysesFromDb = async (
+  codPropostas: string[],
+  analysisType: AnalysisType = 'padrao',
+): Promise<MultiAnalysisDataResult> => {
   const startedAt = performance.now();
   const pool = await getPool();
   const codPropostasCsv = codPropostas.join(',');
 
-  const recordsets = await executeMultiQueryWithRetry(analysisJsonSql, codPropostasCsv, pool);
+  const sqlText = resolveSqlByType(analysisType);
+  const recordsets = await executeMultiQueryWithRetry(sqlText, codPropostasCsv, pool);
   const items = extractMultiJsonData(recordsets);
   const elapsedMs = Math.round(performance.now() - startedAt);
 

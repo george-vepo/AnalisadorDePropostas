@@ -34,6 +34,7 @@ const normalizeCodPropostas = (value: string) => {
 
 const AnalyzeProposalPage = () => {
   const [codPropostasText, setCodPropostasText] = useState('');
+  const [analysisType, setAnalysisType] = useState<'padrao' | 'sensibilizacao' | 'pagamento'>('padrao');
   const [status, setStatus] = useState<Status>({
     type: 'idle',
     message: 'Informe um ou mais códigos de proposta para iniciar a análise.',
@@ -58,7 +59,7 @@ const AnalyzeProposalPage = () => {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codPropostas: normalizedPropostas }),
+        body: JSON.stringify({ codPropostas: normalizedPropostas, analysisType }),
       });
       const payload = (await response.json()) as AnalyzeResponse[] & ErrorResponse;
 
@@ -88,6 +89,36 @@ const AnalyzeProposalPage = () => {
       <p>Consulta direta ao SQL Server com autenticação integrada do Windows.</p>
 
       <form onSubmit={handleAnalyze}>
+        <label htmlFor="analysisType">Tipo de análise</label>
+        <select
+          id="analysisType"
+          value={analysisType}
+          onChange={(event) =>
+            setAnalysisType(event.target.value as 'padrao' | 'sensibilizacao' | 'pagamento')
+          }
+        >
+          <option value="padrao">Análise padrão</option>
+          <option value="sensibilizacao">Análise de erro de sensibilização</option>
+          <option value="pagamento">Análise de pagamento</option>
+        </select>
+        {analysisType === 'sensibilizacao' && (
+          <div className="context-card">
+            <p className="helper">
+              Etapa essencial no processo de vendas na CVP: repasse dos contratos para o SIGPF
+              (sensibilização), garantindo coerência entre o portal de vendas e o SIGPF.
+            </p>
+          </div>
+        )}
+        {analysisType === 'pagamento' && (
+          <div className="context-card">
+            <p className="helper">
+              Esta análise valida se a geração de boletos/links e o débito do pagamento ocorreram corretamente.
+            </p>
+            <p className="helper">
+              Tempo estimado: aproximadamente 10 minutos.
+            </p>
+          </div>
+        )}
         <label htmlFor="codPropostas">Códigos das propostas</label>
         <textarea
           id="codPropostas"

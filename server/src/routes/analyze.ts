@@ -96,7 +96,29 @@ analyzeRouter.post('/analyze', async (req, res) => {
     reqLogger.info({ requestId, stage, elapsedMs }, 'Stage completed');
   };
 
-  const rawInput = (req.body as { codPropostas?: unknown; codProposta?: unknown })?.codPropostas ?? req.body?.codProposta;
+  const rawInput =
+    (req.body as { codPropostas?: unknown; codProposta?: unknown })?.codPropostas ?? req.body?.codProposta;
+  const rawAnalysisType = (req.body as { analysisType?: unknown })?.analysisType;
+  const analysisType =
+    rawAnalysisType === 'sensibilizacao' || rawAnalysisType === 'pagamento' || rawAnalysisType === 'padrao'
+      ? rawAnalysisType
+      : 'padrao';
+  const analysisContext =
+    analysisType === 'sensibilizacao'
+      ? [
+          'Contexto: análise de erro de sensibilização (repasse do CVP para o SIGPF/CAIXA).',
+          'Objetivo: identificar inconsistências entre dados de propostas e os retornos das APIs/serviços.',
+          'Considere o rastro de atividades da sessão (PV_028_LOG_SERVICO_REST) para comparar cada requisição e retorno.',
+          'Aponte divergências relevantes e quais campos/tabelas não batem.',
+        ].join(' ')
+      : analysisType === 'pagamento'
+        ? [
+            'Contexto: análise do fluxo de pagamento da proposta.',
+            'Objetivo: validar geração de boleto/link de pagamento, débitos e status final de pagamento.',
+            'Considere logs de integrações externas (PV_082_LOG_SERVICO_REST_EXTERNO) para checar requisições e retornos.',
+            'Aponte divergências de valores, status e qualquer etapa pendente no fluxo de pagamento.',
+          ].join(' ')
+        : '';
   const normalized = normalizeCodPropostasInput(rawInput);
   const codPropostas = Array.from(new Set(normalized));
 
@@ -135,7 +157,7 @@ analyzeRouter.post('/analyze', async (req, res) => {
 
   let analysisData;
   try {
-    analysisData = await fetchAnalysesFromDb(codPropostas);
+    analysisData = await fetchAnalysesFromDb(codPropostas, analysisType);
   } catch (error) {
     if (error instanceof SqlTimeoutError) {
       incrementError();
@@ -278,6 +300,7 @@ analyzeRouter.post('/analyze', async (req, res) => {
       const textResult = await analyzeWithOpenAIText(
         codProposta,
         payloadForModel,
+        analysisContext,
         configResult.config.openai,
         apiKey,
         {
