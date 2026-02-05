@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeForOpenAI } from '../sanitizer';
+import { sanitizePayloadDetailed } from '../sanitizer';
 import { normalizeFieldName } from '../sanitizer/normalizeFieldName';
 
 const buildAllowList = (names: string[]) => new Set(names.map((name) => normalizeFieldName(name)));
 
-describe('sanitizeForOpenAI', () => {
+describe('sanitizePayloadDetailed', () => {
   it('masks CPF digits inside strings without removing the field', () => {
     const allowList = buildAllowList(['mensagem']);
     const payload = { mensagem: 'Não foi encontrado os dados para o CPF:14028002664' };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
 
     expect(result.sanitizedJson).toEqual({
       mensagem: 'Não foi encontrado os dados para o CPF:***********',
@@ -20,7 +20,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['mensagem']);
     const payload = { mensagem: 'Texto   com  espaços   úteis' };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
     const sanitized = result.sanitizedJson as typeof payload;
 
     expect(sanitized).toEqual({ mensagem: 'Texto com espaços úteis' });
@@ -30,7 +30,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['DES_RETORNO']);
     const payload = { DES_RETORNO: `JVBERi0x${'A'.repeat(2100)}` };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
 
     expect(result.sanitizedJson).toEqual({});
   });
@@ -39,7 +39,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['URL_SERVICO']);
     const payload = { URL_SERVICO: 'https://example.com/api?Cpf=14028002664&foo=bar' };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
     const sanitized = result.sanitizedJson as typeof payload;
 
     const parsedUrl = new URL(sanitized.URL_SERVICO);
@@ -51,7 +51,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['detalhes']);
     const payload = { detalhes: { cpf: '11122233344' } };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
 
     expect(result.sanitizedJson).toEqual({});
   });
@@ -61,7 +61,7 @@ describe('sanitizeForOpenAI', () => {
     const text = `Inicio ${'á'.repeat(100000)} CPF 14028002664 fim ${'B'.repeat(100000)}`;
     const payload = { DES_ENVIO: text };
 
-    const result = sanitizeForOpenAI(payload, allowList);
+    const result = sanitizePayloadDetailed(payload, { allowList });
     const sanitized = result.sanitizedJson as typeof payload;
 
     expect(sanitized.DES_ENVIO).toContain('CPF ***********');
@@ -74,7 +74,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['itens', 'id']);
     const payload = { itens: Array.from({ length: 500 }, (_, index) => ({ id: index })) };
 
-    const result = sanitizeForOpenAI(payload, allowList, { maxArrayItems: 50 });
+    const result = sanitizePayloadDetailed(payload, { allowList, maxArrayItems: 50 });
     const sanitized = result.sanitizedJson as any;
 
     expect(sanitized.itens.__meta).toEqual({
@@ -90,7 +90,7 @@ describe('sanitizeForOpenAI', () => {
     const allowList = buildAllowList(['nivel1', 'nivel2']);
     const payload = { nivel1: { nivel2: { nivel3: { valor: 'x' } } } };
 
-    const result = sanitizeForOpenAI(payload, allowList, { maxDepth: 2 });
+    const result = sanitizePayloadDetailed(payload, { allowList, maxDepth: 2 });
     const sanitized = result.sanitizedJson as any;
 
     expect(sanitized.nivel1.nivel2.nivel3).toBe('<DEPTH_LIMIT_REACHED>');

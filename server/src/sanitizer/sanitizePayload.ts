@@ -1,4 +1,5 @@
 import { applyPayloadBudget } from '../payloadBudget';
+import { getAllowListSet } from './allowlistFields';
 import { normalizeFieldName } from './normalizeFieldName';
 
 export type SanitizeStats = {
@@ -304,13 +305,13 @@ export const sanitizeDeepDelete = (
 
 export const sanitizeAny = sanitizeDeepDelete;
 
-export const sanitizeForOpenAI = (
+export const sanitizePayloadDetailed = (
   input: unknown,
-  allowList: Set<string>,
   options?: {
     maxDepth?: number;
     maxArrayItems?: number;
     maxPayloadBytes?: number;
+    allowList?: Set<string>;
   },
 ) => {
   const stats: SanitizeStats = {
@@ -326,7 +327,7 @@ export const sanitizeForOpenAI = (
   };
 
   const sanitizeOptions: SanitizeOptions = {
-    allowList,
+    allowList: options?.allowList ?? getAllowListSet(),
     maxDepth: options?.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxArrayItems: options?.maxArrayItems ?? DEFAULT_MAX_ARRAY_ITEMS,
     maxPayloadBytes: options?.maxPayloadBytes,
@@ -349,3 +350,13 @@ export const sanitizeForOpenAI = (
 
   return { sanitizedJson, stats };
 };
+
+export const sanitizePayload = (
+  input: unknown,
+  options?: {
+    maxDepth?: number;
+    maxArrayItems?: number;
+    maxPayloadBytes?: number;
+    allowList?: Set<string>;
+  },
+) => sanitizePayloadDetailed(input, options).sanitizedJson;
