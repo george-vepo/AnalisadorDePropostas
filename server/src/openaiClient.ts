@@ -387,7 +387,6 @@ const postOpenAIWithRetry = async (
 ) => {
   let attempt = 0;
   let lastError: unknown = null;
-  let proxyForAttempt = proxy;
 
   while (attempt <= options.maxRetries) {
     const attemptStart = Date.now();
@@ -403,13 +402,7 @@ const postOpenAIWithRetry = async (
         "OpenAI: attempt started",
       );
 
-      const result = await postOpenAI(
-        body,
-        apiKey,
-        options,
-        projectId,
-        proxyForAttempt,
-      );
+      const result = await postOpenAI(body, apiKey, options, projectId, proxy);
 
       if (
         result?.response &&
@@ -447,21 +440,8 @@ const postOpenAIWithRetry = async (
     } catch (error) {
       lastError = error;
       const retryableNetwork = isRetryableNetworkError(error);
-      if (retryableNetwork && proxy === "pac") {
+      if (retryableNetwork && config.proxy === "pac") {
         notePacNetworkError(error);
-
-        // Se o PAC/fallback falhar por erro de rede, a próxima tentativa usa conexão direta
-        // para evitar ficar preso em um proxy indisponível.
-        if (proxyForAttempt === "pac") {
-          proxyForAttempt = null;
-          logger.warn(
-            {
-              attempt: attempt + 1,
-              fallbackProxyMode: "no-proxy",
-            },
-            "OpenAI: switching to direct connection after PAC/proxy network error",
-          );
-        }
       }
 
       if (attempt >= options.maxRetries) {
