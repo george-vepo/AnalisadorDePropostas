@@ -56,14 +56,6 @@ export type PipelineConfig = {
   runbooks: {
     items: RunbookItem[];
   };
-  openai: {
-    model: string;
-    temperature: number;
-    systemPrompt: string;
-    userPromptTemplate: string;
-    projectId?: string;
-    proxy?: string | null;
-  };
   cache: {
     enabled: boolean;
     ttlSeconds: number;

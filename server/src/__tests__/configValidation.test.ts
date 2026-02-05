@@ -28,12 +28,6 @@ const validConfig = {
   runbooks: {
     items: [],
   },
-  openai: {
-    model: 'gpt-5.2-mini',
-    temperature: 0.2,
-    systemPrompt: 'prompt',
-    userPromptTemplate: 'template',
-  },
   cache: {
     enabled: true,
     ttlSeconds: 60,
@@ -52,9 +46,9 @@ describe('validateConfigData', () => {
   });
 
   it('rejects an invalid config payload', () => {
-    const invalid = { ...validConfig, openai: { model: 'gpt-5.2-mini' } };
+    const invalid = { ...validConfig, cache: { enabled: true } };
     const result = validateConfigData(invalid);
     expect(result.ok).toBe(false);
-    expect(result.errors?.some((error) => error.path.includes('openai'))).toBe(true);
+    expect(result.errors?.some((error) => error.path.includes('cache'))).toBe(true);
   });
 });

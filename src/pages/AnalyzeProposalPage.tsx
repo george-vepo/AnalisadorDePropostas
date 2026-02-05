@@ -6,15 +6,9 @@ type Status = {
 };
 
 type AnalyzeResponse = {
-  codigoProposta: string;
-  resultadoJson?: unknown;
-  analise?: {
-    texto?: string;
-  };
-  error?: {
-    message?: string;
-    details?: string;
-  };
+  ok: boolean;
+  proposalNumber: string;
+  prompt: string;
 };
 
 type ErrorResponse = {
@@ -24,57 +18,59 @@ type ErrorResponse = {
   };
 };
 
-const normalizeCodPropostas = (value: string) => {
-  const tokens = value
-    .split(/[\n,;]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return Array.from(new Set(tokens));
-};
+type AnalysisType = 'padrao' | 'sensibilizacao' | 'pagamento';
 
 const AnalyzeProposalPage = () => {
-  const [codPropostasText, setCodPropostasText] = useState('');
-  const [analysisType, setAnalysisType] = useState<'padrao' | 'sensibilizacao' | 'pagamento'>('padrao');
+  const [codProposta, setCodProposta] = useState('');
+  const [analysisType, setAnalysisType] = useState<AnalysisType>('padrao');
   const [status, setStatus] = useState<Status>({
     type: 'idle',
-    message: 'Informe um ou mais códigos de proposta para iniciar a análise.',
+    message: 'Informe um código de proposta para gerar o prompt.',
   });
-  const [results, setResults] = useState<AnalyzeResponse[]>([]);
+  const [prompt, setPrompt] = useState('');
+  const [copied, setCopied] = useState(false);
 
-  const normalizedPropostas = useMemo(() => normalizeCodPropostas(codPropostasText), [codPropostasText]);
-  const canAnalyze = normalizedPropostas.length > 0 && status.type !== 'loading';
+  const canAnalyze = useMemo(() => codProposta.trim().length > 0 && status.type !== 'loading', [codProposta, status.type]);
 
   const handleAnalyze = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (normalizedPropostas.length === 0) {
-      setStatus({ type: 'error', message: 'Digite ao menos um código de proposta válido.' });
+    const proposal = codProposta.trim();
+    if (!proposal) {
+      setStatus({ type: 'error', message: 'Digite um código de proposta válido.' });
       return;
     }
 
-    setStatus({ type: 'loading', message: 'Consultando e analisando propostas...' });
-    setResults([]);
+    setStatus({ type: 'loading', message: 'Consultando proposta e gerando prompt...' });
+    setPrompt('');
 
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codPropostas: normalizedPropostas, analysisType }),
+        body: JSON.stringify({ codProposta: proposal, analysisType }),
       });
-      const payload = (await response.json()) as AnalyzeResponse[] & ErrorResponse;
+      const payload = (await response.json()) as AnalyzeResponse & ErrorResponse;
 
       if (!response.ok) {
-        const message = payload.error?.message ?? 'Erro ao executar análise.';
+        const message = payload.error?.message ?? 'Erro ao gerar prompt.';
         const details = payload.error?.details ? ` (${payload.error.details})` : '';
         throw new Error(`${message}${details}`);
       }
 
-      setResults(Array.isArray(payload) ? payload : []);
-      setStatus({ type: 'success', message: 'Análise concluída com sucesso.' });
+      setPrompt(payload.prompt ?? '');
+      setStatus({ type: 'success', message: 'Prompt gerado com sucesso.' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro inesperado ao executar análise.';
+      const message = error instanceof Error ? error.message : 'Erro inesperado ao gerar prompt.';
       setStatus({ type: 'error', message });
     }
+  };
+
+  const handleCopy = async () => {
+    if (!prompt) return;
+    await navigator.clipboard.writeText(prompt);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
   };
 
   const statusClass = useMemo(() => {
@@ -86,79 +82,43 @@ const AnalyzeProposalPage = () => {
   return (
     <main>
       <h1>Analisador de Propostas</h1>
-      <p>Consulta direta ao SQL Server com autenticação integrada do Windows.</p>
+      <p>Consulta no SQL e geração local de prompt para uso no Codex.</p>
 
       <form onSubmit={handleAnalyze}>
         <label htmlFor="analysisType">Tipo de análise</label>
         <select
           id="analysisType"
           value={analysisType}
-          onChange={(event) =>
-            setAnalysisType(event.target.value as 'padrao' | 'sensibilizacao' | 'pagamento')
-          }
+          onChange={(event) => setAnalysisType(event.target.value as AnalysisType)}
         >
           <option value="padrao">Análise padrão</option>
-          <option value="sensibilizacao">Análise de erro de sensibilização</option>
+          <option value="sensibilizacao">Análise de sensibilização</option>
           <option value="pagamento">Análise de pagamento</option>
         </select>
-        {analysisType === 'sensibilizacao' && (
-          <div className="context-card">
-            <p className="helper">
-              Etapa essencial no processo de vendas na CVP: repasse dos contratos para o SIGPF
-              (sensibilização), garantindo coerência entre o portal de vendas e o SIGPF.
-            </p>
-          </div>
-        )}
-        {analysisType === 'pagamento' && (
-          <div className="context-card">
-            <p className="helper">
-              Esta análise valida se a geração de boletos/links e o débito do pagamento ocorreram corretamente.
-            </p>
-            <p className="helper">
-              Tempo estimado: aproximadamente 10 minutos.
-            </p>
-          </div>
-        )}
-        <label htmlFor="codPropostas">Códigos das propostas</label>
-        <textarea
-          id="codPropostas"
-          value={codPropostasText}
-          onChange={(event) => setCodPropostasText(event.target.value)}
-          placeholder="Ex.: 9063046000890-1, 8405430000088-1"
-          rows={4}
+
+        <label htmlFor="codProposta">Código da proposta</label>
+        <input
+          id="codProposta"
+          value={codProposta}
+          onChange={(event) => setCodProposta(event.target.value)}
+          placeholder="Ex.: 9063046000890-1"
         />
-        {normalizedPropostas.length > 0 && (
-          <p className="helper">{normalizedPropostas.length} propostas detectadas.</p>
-        )}
         <div className="actions">
           <button type="submit" disabled={!canAnalyze}>
-            {status.type === 'loading' ? 'Analisando...' : 'Analisar'}
+            {status.type === 'loading' ? 'Gerando...' : 'Gerar prompt'}
           </button>
         </div>
       </form>
 
       <div className={statusClass}>{status.message}</div>
 
-      {results.length > 0 && (
+      {prompt && (
         <section className="result">
-          <div>
-            <h2>Resultados</h2>
-            <p className="analysis-subtitle">Resumo gerado automaticamente pela OpenAI.</p>
-          </div>
-          <div className="results-list">
-            {results.map((result) => (
-              <article key={result.codigoProposta} className="result-item">
-                <h3>Proposta {result.codigoProposta}</h3>
-                {result.error ? (
-                  <p className="error-message">
-                    {result.error.message}
-                    {result.error.details ? ` (${result.error.details})` : ''}
-                  </p>
-                ) : (
-                  <pre className="output">{result.analise?.texto ?? 'Sem resposta disponível.'}</pre>
-                )}
-              </article>
-            ))}
+          <h2>Prompt</h2>
+          <textarea className="prompt-box" readOnly value={prompt} rows={14} />
+          <div className="actions">
+            <button type="button" onClick={handleCopy}>Copiar</button>
+            {copied && <span className="helper">Copiado!</span>}
           </div>
         </section>
       )}
