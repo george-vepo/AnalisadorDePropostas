@@ -9,13 +9,13 @@ type LoggerLike = {
 
 const execFileAsync = promisify(execFile);
 const isWindows = process.platform === 'win32';
-const PAC_REFRESH_COOLDOWN_MS = 30_000;
-// Exemplo: DISABLE_PAC_DISCOVERY=true + HTTP_PROXY/HTTPS_PROXY (ou PROXY_FALLBACK_URL) para proxy fixo.
+const PAC_DISCOVERY_COOLDOWN_MS = 30_000;
+const DEFAULT_WPAD_URL = 'http://webproxy.adcorp.intranet/wpad.dat';
+const DEFAULT_HEALTHCHECK_TIMEOUT_MS = 1_800;
 
 let cachedPacUrl: string | null = null;
-let pacSource: 'env' | 'discovery' | null = null;
-let inFlightRefresh: Promise<string | null> | null = null;
-let lastRefreshAt = 0;
+let inFlightResolve: Promise<string | null> | null = null;
+let lastResolvedAt = 0;
 let refreshTimer: NodeJS.Timeout | null = null;
 
 const isTruthy = (value?: string) =>
@@ -48,6 +48,57 @@ const normalizePacUrl = (value: string | null) => {
   }
 };
 
+const isLoopbackPacUrl = (pacUrl: string) => {
+  const hostname = new URL(pacUrl).hostname.toLowerCase();
+  return hostname === '127.0.0.1' || hostname === 'localhost';
+};
+
+const toAbortSignal = (timeoutMs: number) => {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
+};
+
+const isHealthcheckNetworkError = (error: unknown) => {
+  const anyErr = error as { code?: string; cause?: { code?: string } };
+  const code = anyErr?.cause?.code ?? anyErr?.code;
+  return code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT';
+};
+
+const healthcheckPacUrl = async (pacUrl: string) => {
+  const timeoutMs = Number(process.env.PAC_HEALTHCHECK_TIMEOUT_MS ?? DEFAULT_HEALTHCHECK_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(pacUrl, {
+      method: 'GET',
+      signal: toAbortSignal(Number.isFinite(timeoutMs) ? timeoutMs : DEFAULT_HEALTHCHECK_TIMEOUT_MS),
+    });
+    logger.info(
+      {
+        pacUrl: sanitizeUrl(pacUrl),
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      },
+      'Healthcheck do PAC loopback concluído.',
+    );
+    return response.ok;
+  } catch (error) {
+    logger.warn(
+      {
+        pacUrl: sanitizeUrl(pacUrl),
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        networkError: isHealthcheckNetworkError(error),
+      },
+      'Healthcheck do PAC loopback falhou.',
+    );
+    return false;
+  }
+};
+
 const readRegistryAutoConfigUrl = async (): Promise<string | null> => {
   const { stdout } = await execFileAsync(
     'powershell',
@@ -62,154 +113,115 @@ const readRegistryAutoConfigUrl = async (): Promise<string | null> => {
   return trimmed ? trimmed : null;
 };
 
-const parseWinHttpOutput = (output: string) => {
-  if (/direct access/i.test(output)) {
-    return { pacUrl: null, proxyServer: null, direct: true };
+const getWpadUrl = () => normalizePacUrl(process.env.WPAD_URL ?? DEFAULT_WPAD_URL) ?? DEFAULT_WPAD_URL;
+
+const shouldRefresh = () => Date.now() - lastResolvedAt > PAC_DISCOVERY_COOLDOWN_MS;
+
+const discoverPacUrl = async (reason: string) => {
+  const forcedPacUrl = normalizePacUrl(process.env.PAC_URL ?? process.env.PROXY_PAC_URL ?? null);
+  if (forcedPacUrl) {
+    logger.info(
+      { pacUrl: sanitizeUrl(forcedPacUrl), reason },
+      'PAC definido por variável de ambiente (PAC_URL/PROXY_PAC_URL).',
+    );
+    return forcedPacUrl;
   }
-  const pacMatch = output.match(/PAC URL\s*:\s*(\S+)/i);
-  const proxyMatch = output.match(/Proxy Server\(s\)\s*:\s*(.+)/i);
-  return {
-    pacUrl: pacMatch?.[1]?.trim() ?? null,
-    proxyServer: proxyMatch?.[1]?.trim() ?? null,
-    direct: false,
-  };
-};
 
-const readWinHttpPacUrl = async () => {
-  const { stdout } = await execFileAsync(
-    'netsh',
-    ['winhttp', 'show', 'proxy'],
-    { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 },
-  );
-  return parseWinHttpOutput(stdout ?? '');
-};
+  if (!isWindows) {
+    const fallbackWpad = getWpadUrl();
+    logger.info(
+      { pacUrl: sanitizeUrl(fallbackWpad), reason },
+      'SO não Windows. Usando WPAD_URL padrão/configurado.',
+    );
+    return fallbackWpad;
+  }
 
-export const getPacUrlFromWindows = async (): Promise<string | null> => {
-  if (!isWindows) return null;
+  const rawRegistryPacUrl = await readRegistryAutoConfigUrl();
+  const registryPacUrl = normalizePacUrl(rawRegistryPacUrl);
 
-  const registryValue = await readRegistryAutoConfigUrl();
-  const normalizedRegistry = normalizePacUrl(registryValue);
   logger.info(
-    { autoConfigUrl: registryValue ? sanitizeUrl(registryValue) : null },
+    {
+      reason,
+      autoConfigUrlRaw: rawRegistryPacUrl ? sanitizeUrl(rawRegistryPacUrl) : null,
+      autoConfigUrl: registryPacUrl ? sanitizeUrl(registryPacUrl) : null,
+    },
     'AutoConfigURL lido do registry.',
   );
-  if (normalizedRegistry) {
-    return normalizedRegistry;
+
+  if (registryPacUrl) {
+    if (isLoopbackPacUrl(registryPacUrl)) {
+      const healthy = await healthcheckPacUrl(registryPacUrl);
+      if (healthy) {
+        return registryPacUrl;
+      }
+      logger.warn(
+        { pacUrl: sanitizeUrl(registryPacUrl), reason },
+        'PAC loopback está stale/indisponível. Aplicando fallback para WPAD corporativo.',
+      );
+    } else {
+      return registryPacUrl;
+    }
   }
 
-  const winHttp = await readWinHttpPacUrl();
-  if (winHttp.direct) {
-    logger.info({}, 'WinHTTP proxy: acesso direto.');
-    return null;
-  }
-
-  if (winHttp.proxyServer) {
-    logger.warn(
-      { proxyServer: winHttp.proxyServer },
-      'WinHTTP proxy encontrado, mas sem PAC URL.',
-    );
-  }
-
-  const normalizedPac = normalizePacUrl(winHttp.pacUrl);
-  if (normalizedPac) {
-    return normalizedPac;
-  }
-
-  return null;
+  const fallbackWpad = getWpadUrl();
+  logger.info(
+    { pacUrl: sanitizeUrl(fallbackWpad), reason },
+    'Usando WPAD corporativo como fallback de discovery.',
+  );
+  return fallbackWpad;
 };
 
-const applyPacUrl = (pacUrl: string | null, loggerLike: LoggerLike, reason: string) => {
-  if (pacSource === 'env') {
-    loggerLike.info(
-      { pacUrl: sanitizeUrl(process.env.PROXY_PAC_URL ?? '') },
-      'PROXY_PAC_URL definido por env. Discovery ignorado.',
-    );
-    return pacUrl;
-  }
-
-  if (pacUrl) {
-    cachedPacUrl = pacUrl;
-    pacSource = 'discovery';
-    process.env.PROXY_PAC_URL = pacUrl;
-    loggerLike.info(
-      { pacUrl: sanitizeUrl(pacUrl), reason },
-      'PAC URL atualizado via discovery.',
-    );
-    return pacUrl;
-  }
-
-  if (pacSource === 'discovery') {
-    delete process.env.PROXY_PAC_URL;
-  }
-  cachedPacUrl = null;
-  pacSource = pacSource === 'env' ? 'env' : null;
-  loggerLike.warn({ reason }, 'PAC URL não encontrado. Usando fallback.');
-  return null;
-};
-
-const shouldRefresh = () => Date.now() - lastRefreshAt > PAC_REFRESH_COOLDOWN_MS;
-
-export const refreshPacDiscovery = async (reason: string) => {
-  if (!isWindows) return null;
+export const resolvePacUrlForRequest = async (reason: string) => {
   if (isTruthy(process.env.DISABLE_PAC_DISCOVERY)) {
-    logger.info(
-      { reason },
-      'Discovery de PAC desativado via DISABLE_PAC_DISCOVERY.',
-    );
-    return null;
+    return normalizePacUrl(process.env.PAC_URL ?? process.env.PROXY_PAC_URL ?? null);
   }
-  if (!shouldRefresh()) {
+
+  if (!shouldRefresh() && cachedPacUrl) {
     return cachedPacUrl;
   }
-  if (inFlightRefresh) return inFlightRefresh;
 
-  inFlightRefresh = (async () => {
-    lastRefreshAt = Date.now();
+  if (inFlightResolve) {
+    return inFlightResolve;
+  }
+
+  inFlightResolve = (async () => {
+    lastResolvedAt = Date.now();
     try {
-      const pacUrl = await getPacUrlFromWindows();
-      return applyPacUrl(pacUrl, logger, reason);
+      const pacUrl = await discoverPacUrl(reason);
+      cachedPacUrl = pacUrl;
+      return pacUrl;
     } catch (error) {
+      const fallbackWpad = getWpadUrl();
+      cachedPacUrl = fallbackWpad;
       logger.warn(
-        { err: error instanceof Error ? error.message : String(error), reason },
-        'Falha ao descobrir PAC no Windows.',
+        {
+          reason,
+          pacUrl: sanitizeUrl(fallbackWpad),
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Falha ao resolver PAC URL. Usando fallback de WPAD.',
       );
-      return applyPacUrl(null, logger, reason);
+      return fallbackWpad;
     } finally {
-      inFlightRefresh = null;
+      inFlightResolve = null;
     }
   })();
 
-  return inFlightRefresh;
+  return inFlightResolve;
 };
 
 export const initPacDiscovery = async (loggerLike: LoggerLike) => {
-  if (!isWindows) {
-    return false;
-  }
-  if (process.env.PROXY_PAC_URL?.trim()) {
-    pacSource = 'env';
-    cachedPacUrl = process.env.PROXY_PAC_URL.trim();
-    loggerLike.info(
-      { pacUrl: sanitizeUrl(cachedPacUrl) },
-      'PROXY_PAC_URL já definido no ambiente.',
-    );
-    return true;
-  }
-  if (isTruthy(process.env.DISABLE_PAC_DISCOVERY)) {
-    loggerLike.info(
-      { disableFlag: process.env.DISABLE_PAC_DISCOVERY },
-      'Discovery de PAC desativado via DISABLE_PAC_DISCOVERY.',
-    );
-    return false;
-  }
-
-  const pacUrl = await refreshPacDiscovery('startup');
+  const pacUrl = await resolvePacUrlForRequest('startup');
+  loggerLike.info(
+    { pacUrl: pacUrl ? sanitizeUrl(pacUrl) : null },
+    'PAC discovery inicializado.',
+  );
 
   const intervalMinutes = Number(process.env.PAC_DISCOVERY_INTERVAL_MINUTES ?? '');
   if (Number.isFinite(intervalMinutes) && intervalMinutes > 0) {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(() => {
-      void refreshPacDiscovery('interval');
+      void resolvePacUrlForRequest('interval');
     }, intervalMinutes * 60_000);
     loggerLike.info(
       { intervalMinutes },
@@ -221,13 +233,10 @@ export const initPacDiscovery = async (loggerLike: LoggerLike) => {
 };
 
 export const notePacNetworkError = (error: unknown) => {
-  if (!isWindows) return;
-  if (isTruthy(process.env.DISABLE_PAC_DISCOVERY)) return;
   const anyErr = error as { code?: string };
   const code = anyErr?.code;
-  if (code !== 'ECONNRESET' && code !== 'ETIMEDOUT') return;
-  void refreshPacDiscovery(`network:${code}`);
+  if (code !== 'ECONNRESET' && code !== 'ETIMEDOUT' && code !== 'ECONNREFUSED') return;
+  void resolvePacUrlForRequest(`network:${code}`);
 };
 
-export const getActivePacUrl = () =>
-  process.env.PROXY_PAC_URL?.trim() || cachedPacUrl;
+export const getActivePacUrl = () => cachedPacUrl;

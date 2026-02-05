@@ -16,14 +16,14 @@ const sanitizeUrl = (value: string) => {
 };
 
 export function initPacProxyFromEnv(logger: LoggerLike) {
-  const pacUrl = process.env.PROXY_PAC_URL?.trim();
+  const pacUrl = process.env.PAC_URL?.trim() || process.env.PROXY_PAC_URL?.trim();
   if (!pacUrl) {
     return false;
   }
 
   logger.info(
     { pacUrl: sanitizeUrl(pacUrl) },
-    'Proxy PAC configurado. Resolução será feita por request.',
+    'Proxy PAC configurado por ambiente. Resolução será feita por request.',
   );
   return true;
 }

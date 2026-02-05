@@ -14,7 +14,8 @@
     "install:node18": "set \"PATH=%USERPROFILE%\\tools\\node18;%PATH%\" && npm install",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "pac:check": "tsx scripts/pac-check.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1",
