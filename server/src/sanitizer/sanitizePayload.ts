@@ -19,6 +19,7 @@ type SanitizeOptions = {
   maxDepth: number;
   maxArrayItems: number;
   maxPayloadBytes?: number;
+  preserveUnparseableUrls: boolean;
   removeBinary: boolean;
   allowStringTruncation: boolean;
   stats: SanitizeStats;
@@ -146,7 +147,7 @@ const isUrlFieldName = (fieldNorm: string): boolean => {
   return fieldNorm.includes('url');
 };
 
-const sanitizeUrlValue = (value: string): string | undefined => {
+const sanitizeUrlValue = (value: string, preserveUnparseableUrls: boolean): string | undefined => {
   try {
     const url = new URL(value);
     const params = Array.from(url.searchParams.entries());
@@ -163,6 +164,9 @@ const sanitizeUrlValue = (value: string): string | undefined => {
     }
     return url.toString();
   } catch {
+    if (preserveUnparseableUrls) {
+      return maskSensitiveDigits(value);
+    }
     return undefined;
   }
 };
@@ -280,7 +284,7 @@ export const sanitizeDeepDelete = (
     }
 
     if (isUrlFieldName(normalizedName)) {
-      const sanitizedUrl = sanitizeUrlValue(input);
+      const sanitizedUrl = sanitizeUrlValue(input, options.preserveUnparseableUrls);
       if (!sanitizedUrl) {
         options.stats.removedSensitiveCount += 1;
         return undefined;
@@ -312,6 +316,7 @@ export const sanitizePayloadDetailed = (
     maxArrayItems?: number;
     maxPayloadBytes?: number;
     allowList?: Set<string>;
+    preserveUnparseableUrls?: boolean;
   },
 ) => {
   const stats: SanitizeStats = {
@@ -331,6 +336,7 @@ export const sanitizePayloadDetailed = (
     maxDepth: options?.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxArrayItems: options?.maxArrayItems ?? DEFAULT_MAX_ARRAY_ITEMS,
     maxPayloadBytes: options?.maxPayloadBytes,
+    preserveUnparseableUrls: options?.preserveUnparseableUrls ?? false,
     removeBinary: true,
     allowStringTruncation: false,
     stats,
@@ -358,5 +364,6 @@ export const sanitizePayload = (
     maxArrayItems?: number;
     maxPayloadBytes?: number;
     allowList?: Set<string>;
+    preserveUnparseableUrls?: boolean;
   },
 ) => sanitizePayloadDetailed(input, options).sanitizedJson;
