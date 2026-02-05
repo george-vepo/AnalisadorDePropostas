@@ -481,6 +481,7 @@ const postOpenAIWithRetry = async (
 export const analyzeWithOpenAIText = async (
   proposalNumber: string,
   sanitizedPayload: unknown,
+  analysisContext: string,
   config: OpenAIConfig,
   apiKey: string,
   requestOptions: OpenAIRequestOptions,
@@ -496,6 +497,7 @@ export const analyzeWithOpenAIText = async (
   const dataJson = JSON.stringify(sanitizedPayload);
   const userPrompt = renderTemplate(config.userPromptTemplate, {
     proposalNumber: formattedProposalNumber,
+    analysisContext,
     dataJson,
   });
   const requestBody = buildRequestBody(config, userPrompt);
