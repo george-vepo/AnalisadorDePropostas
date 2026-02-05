@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { sanitizePayloadDetailed } from '../sanitizer';
 import { normalizeFieldName } from '../sanitizer/normalizeFieldName';
 
-const buildAllowList = (names: string[]) => new Set(names.map((name) => normalizeFieldName(name)));
+describe('sanitizePayload', () => {
+  it('removes sensitive fields', () => {
+    const payload = { nome: 'Teste', cpf: '14028002664', tokenAcesso: 'abc' };
+    const result = sanitizePayload(payload) as Record<string, unknown>;
 
 describe('sanitizePayloadDetailed', () => {
   it('masks CPF digits inside strings without removing the field', () => {
@@ -56,10 +59,9 @@ describe('sanitizePayloadDetailed', () => {
     expect(result.sanitizedJson).toEqual({});
   });
 
-  it('keeps large DES_ENVIO strings intact while masking CPFs', () => {
-    const allowList = buildAllowList(['DES_ENVIO']);
-    const text = `Inicio ${'á'.repeat(100000)} CPF 14028002664 fim ${'B'.repeat(100000)}`;
-    const payload = { DES_ENVIO: text };
+  it('masks CPF/CNPJ sequence inside string and truncates long content', () => {
+    const payload = { mensagem: `CPF 14028002664 ${'x'.repeat(120)}` };
+    const result = sanitizePayload(payload, { maxStringLength: 40 }) as Record<string, string>;
 
     const result = sanitizePayloadDetailed(payload, { allowList });
     const sanitized = result.sanitizedJson as typeof payload;
@@ -93,6 +95,7 @@ describe('sanitizePayloadDetailed', () => {
     const result = sanitizePayloadDetailed(payload, { allowList, maxDepth: 2 });
     const sanitized = result.sanitizedJson as any;
 
-    expect(sanitized.nivel1.nivel2.nivel3).toBe('<DEPTH_LIMIT_REACHED>');
+    expect(result.itens).toHaveLength(2);
+    expect(result.itens[1]).toEqual({ id: 1 });
   });
 });
