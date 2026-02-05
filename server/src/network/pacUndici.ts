@@ -3,9 +3,16 @@ import { createPacResolver } from 'pac-resolver';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
 import { logger } from '../logger';
-import { getActivePacUrl } from './pacWindows';
+import { resolvePacUrlForRequest } from './pacWindows';
 
 type PacResolver = (url: string, host: string) => string | Promise<string>;
+
+type PacRuntime = {
+  pacUrl: string;
+  resolver: PacResolver;
+  engine: 'pac-resolver' | 'vm';
+  hash: string;
+};
 
 const DIRECTIVE_SEPARATOR = ';';
 const DIRECT_AGENT_TIMEOUTS = {
@@ -15,10 +22,13 @@ const DIRECT_AGENT_TIMEOUTS = {
 };
 const PAC_VM_TIMEOUT_MS = 250;
 const PAC_EXEC_TIMEOUT_MS = 250;
+const PAC_DECISION_TTL_MS = Number(process.env.PAC_DECISION_CACHE_MS ?? 180_000);
+const PAC_TIMEOUT_MS = Number(process.env.PAC_TIMEOUT_MS ?? 4_000);
 
 const directAgent = new Agent(DIRECT_AGENT_TIMEOUTS);
 const proxyAgentCache = new Map<string, ProxyAgent>();
-const resolverCache = new Map<string, Promise<PacResolver>>();
+const runtimeCache = new Map<string, Promise<PacRuntime>>();
+const hostDecisionCache = new Map<string, { dispatcher: Dispatcher; expiresAt: number; summary: string }>();
 
 const getEnvProxy = (key: string) =>
   process.env[key]?.trim() || process.env[key.toLowerCase()]?.trim() || '';
@@ -48,7 +58,7 @@ const hostMatchesNoProxy = (hostname: string) => {
 };
 
 const getFallbackProxyUrl = (target: URL) => {
-  const fallback = getEnvProxy('PROXY_FALLBACK_URL');
+  const fallback = getEnvProxy('FALLBACK_PROXY_URL') || getEnvProxy('PROXY_FALLBACK_URL');
   const httpsProxy = getEnvProxy('HTTPS_PROXY');
   const httpProxy = getEnvProxy('HTTP_PROXY');
   const schemeProxy =
@@ -213,44 +223,65 @@ const createVmPacResolver = (pacScript: string): PacResolver => {
 
 const createPacResolverFromScript = (pacScript: string, format: string) => {
   try {
-    return { resolver: createPacResolver(pacScript) as PacResolver, engine: 'pac-resolver' };
+    return { resolver: createPacResolver(pacScript) as PacResolver, engine: 'pac-resolver' as const };
   } catch (error) {
     logger.warn(
       { error: getErrorSummary(error), format },
       'Falha ao compilar PAC com pac-resolver. Tentando VM.',
     );
   }
-  return { resolver: createVmPacResolver(pacScript), engine: 'vm' };
+  return { resolver: createVmPacResolver(pacScript), engine: 'vm' as const };
 };
 
-const getPacResolver = (pacUrl: string) => {
-  const cached = resolverCache.get(pacUrl);
+const abortSignal = (timeoutMs: number) => {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
+};
+
+const isPacContentInvalid = (pacScript: string, contentType: string) => {
+  const normalizedContentType = contentType.toLowerCase();
+  const trimmed = pacScript.trim();
+  if (!trimmed) return true;
+  if (normalizedContentType.includes('text/html')) return true;
+  if (trimmed.startsWith('<!DOCTYPE html') || trimmed.startsWith('<html')) return true;
+  return false;
+};
+
+const getPacRuntime = (pacUrl: string) => {
+  const cached = runtimeCache.get(pacUrl);
   if (cached) return cached;
 
   const resolverPromise = (async () => {
-    const pacParsed = new URL(pacUrl);
-    const fetchInit: { dispatcher?: Dispatcher } = {};
-    if (
-      pacParsed.hostname === '127.0.0.1' ||
-      pacParsed.hostname === 'localhost' ||
-      hostMatchesNoProxy(pacParsed.hostname)
-    ) {
-      fetchInit.dispatcher = directAgent;
-    }
-
-    const response = await fetch(pacUrl, fetchInit);
+    const startedAt = Date.now();
+    const response = await fetch(pacUrl, {
+      signal: abortSignal(Number.isFinite(PAC_TIMEOUT_MS) ? PAC_TIMEOUT_MS : 4_000),
+    });
     const contentType = response.headers.get('content-type') ?? 'unknown';
     if (!response.ok) {
       throw new Error(`Falha ao baixar PAC (${response.status}).`);
     }
     const pacScript = await response.text();
-    if (!pacScript || pacScript.length < 50) {
-      throw new Error('PAC vazio/curto demais (conteúdo inválido).');
+    if (typeof pacScript !== 'string') {
+      throw new Error('PAC inválido: conteúdo não textual.');
+    }
+    if (isPacContentInvalid(pacScript, contentType)) {
+      throw new Error('PAC inválido: vazio ou HTML de erro.');
     }
 
     const { script: normalized, format } = normalizePac(pacScript);
     const { hasFindProxyForURL, format: detectedFormat } = detectPacFormat(pacScript);
+    if (!hasFindProxyForURL) {
+      throw new Error('Conteúdo baixado não parece PAC (FindProxyForURL ausente).');
+    }
+
+    const compileStartAt = Date.now();
+    const { resolver, engine } = createPacResolverFromScript(normalized, format);
     const hash = hashPacScript(pacScript);
+
     logger.info(
       {
         pacUrl: sanitizeUrl(pacUrl),
@@ -261,26 +292,20 @@ const getPacResolver = (pacUrl: string) => {
         normalizedFormat: format,
         hasFindProxyForURL,
         hash,
-        usesDirectForPacFetch: Boolean(fetchInit.dispatcher),
+        downloadMs: compileStartAt - startedAt,
+        compileMs: Date.now() - compileStartAt,
+        totalMs: Date.now() - startedAt,
+        engine,
       },
-      'PAC download result',
+      'PAC carregado e compilado.',
     );
 
-    if (!hasFindProxyForURL) {
-      throw new Error('Conteúdo baixado não parece PAC (não achei FindProxyForURL).');
-    }
-
-    const { resolver, engine } = createPacResolverFromScript(normalized, format);
-    logger.info(
-      { pacUrl: sanitizeUrl(pacUrl), engine },
-      'PAC resolver selecionado.',
-    );
-    return resolver;
+    return { pacUrl, resolver, engine, hash };
   })();
 
-  resolverCache.set(pacUrl, resolverPromise);
+  runtimeCache.set(pacUrl, resolverPromise);
   resolverPromise.catch(() => {
-    resolverCache.delete(pacUrl);
+    runtimeCache.delete(pacUrl);
   });
   return resolverPromise;
 };
@@ -321,14 +346,31 @@ const parseDirective = (
   return { type: 'UNSUPPORTED' };
 };
 
+const withProxyCredentials = (proxyUrl: string) => {
+  const username = getEnvProxy('PROXY_USER');
+  const password = getEnvProxy('PROXY_PASS');
+  if (!username) return proxyUrl;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!parsed.username) {
+      parsed.username = username;
+      if (password) parsed.password = password;
+    }
+    return parsed.toString();
+  } catch {
+    return proxyUrl;
+  }
+};
+
 const getProxyAgent = (proxyUrl: string) => {
-  const cached = proxyAgentCache.get(proxyUrl);
+  const proxyWithAuth = withProxyCredentials(proxyUrl);
+  const cached = proxyAgentCache.get(proxyWithAuth);
   if (cached) return cached;
   const agent = new ProxyAgent({
-    uri: proxyUrl,
+    uri: proxyWithAuth,
     ...DIRECT_AGENT_TIMEOUTS,
   });
-  proxyAgentCache.set(proxyUrl, agent);
+  proxyAgentCache.set(proxyWithAuth, agent);
   return agent;
 };
 
@@ -361,19 +403,13 @@ const getFallbackProxyAgent = (targetUrl: string) => {
   return getProxyAgent(fallbackProxyUrl);
 };
 
-export const resolveUndiciDispatcherFromPac = async (
-  targetUrl: string,
-): Promise<Dispatcher | undefined> => {
-  const pacUrl = getActivePacUrl();
-  if (!pacUrl) {
-    logger.warn(
-      { targetUrl },
-      'PROXY_PAC_URL não definido. Usando dispatcher padrão do runtime.',
-    );
-    return undefined;
-  }
+const getDecisionCacheKey = (pacUrl: string, target: URL) => `${pacUrl}::${target.protocol}//${target.hostname}`;
 
+export const resolveDispatcherForUrl = async (
+  targetUrl: string,
+): Promise<Dispatcher> => {
   const resolvedTarget = new URL(targetUrl);
+
   if (hostMatchesNoProxy(resolvedTarget.hostname)) {
     logger.info(
       { targetUrl, hostname: resolvedTarget.hostname },
@@ -381,9 +417,26 @@ export const resolveUndiciDispatcherFromPac = async (
     );
     return directAgent;
   }
-  let resolver: PacResolver;
+
+  const pacUrl = await resolvePacUrlForRequest(`request:${resolvedTarget.hostname}`);
+  if (!pacUrl) {
+    logger.warn({ targetUrl }, 'PAC URL ausente. Aplicando fallback.');
+    return getFallbackProxyAgent(targetUrl);
+  }
+
+  const cacheKey = getDecisionCacheKey(pacUrl, resolvedTarget);
+  const cachedDecision = hostDecisionCache.get(cacheKey);
+  if (cachedDecision && cachedDecision.expiresAt > Date.now()) {
+    logger.info(
+      { pacUrl: sanitizeUrl(pacUrl), hostname: resolvedTarget.hostname, decision: cachedDecision.summary, cacheHit: true },
+      'PAC decision cache hit.',
+    );
+    return cachedDecision.dispatcher;
+  }
+
+  let runtime: PacRuntime;
   try {
-    resolver = await getPacResolver(pacUrl);
+    runtime = await getPacRuntime(pacUrl);
   } catch (error) {
     logger.warn(
       {
@@ -391,14 +444,14 @@ export const resolveUndiciDispatcherFromPac = async (
         targetUrl,
         error: error instanceof Error ? error.message : String(error),
       },
-      'Falha ao obter resolver do PAC. Usando fallback.',
+      'Falha ao obter runtime do PAC. Usando fallback.',
     );
     return getFallbackProxyAgent(targetUrl);
   }
 
   let pacResultValue = '';
   try {
-    const pacResult = await resolver(targetUrl, resolvedTarget.hostname);
+    const pacResult = await runtime.resolver(targetUrl, resolvedTarget.hostname);
     pacResultValue = String(pacResult ?? '').trim();
   } catch (error) {
     logger.warn(
@@ -419,19 +472,20 @@ export const resolveUndiciDispatcherFromPac = async (
     );
     return getFallbackProxyAgent(targetUrl);
   }
+
   const directives = pacResultValue
     .split(DIRECTIVE_SEPARATOR)
     .map((item) => item.trim())
     .filter(Boolean);
-
-  const firstDirective = directives[0] ?? '';
 
   logger.info(
     {
       pacUrl: sanitizeUrl(pacUrl),
       hostname: resolvedTarget.hostname,
       pacResult: sanitizePacResult(pacResultValue),
-      firstDirective: sanitizeDirective(firstDirective),
+      firstDirective: sanitizeDirective(directives[0] ?? ''),
+      engine: runtime.engine,
+      hash: runtime.hash,
     },
     'PAC decision',
   );
@@ -439,16 +493,33 @@ export const resolveUndiciDispatcherFromPac = async (
   for (const directive of directives) {
     const parsed = parseDirective(directive);
     if (!parsed || parsed.type === 'UNSUPPORTED') continue;
-    if (parsed.type === 'DIRECT') return directAgent;
-    if (parsed.type === 'PROXY') return getProxyAgent(parsed.proxyUrl);
+    if (parsed.type === 'DIRECT') {
+      hostDecisionCache.set(cacheKey, {
+        dispatcher: directAgent,
+        expiresAt: Date.now() + PAC_DECISION_TTL_MS,
+        summary: 'DIRECT',
+      });
+      return directAgent;
+    }
+    if (parsed.type === 'PROXY') {
+      const proxyAgent = getProxyAgent(parsed.proxyUrl);
+      hostDecisionCache.set(cacheKey, {
+        dispatcher: proxyAgent,
+        expiresAt: Date.now() + PAC_DECISION_TTL_MS,
+        summary: sanitizeUrl(parsed.proxyUrl),
+      });
+      return proxyAgent;
+    }
   }
 
   logger.warn(
-    { targetUrl },
+    { targetUrl, pacUrl: sanitizeUrl(pacUrl) },
     'PAC sem diretivas úteis. Usando fallback.',
   );
   return getFallbackProxyAgent(targetUrl);
 };
+
+export const resolveUndiciDispatcherFromPac = resolveDispatcherForUrl;
 
 export const __test__ = {
   detectPacFormat,

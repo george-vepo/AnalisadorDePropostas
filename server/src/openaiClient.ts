@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
-import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
+import { resolveDispatcherForUrl } from "./network/pacUndici";
 import { notePacNetworkError } from "./network/pacWindows";
 
 type OpenAIConfig = {
@@ -132,7 +132,7 @@ const resolveDispatcher = async (proxy?: string | null | "pac") => {
 
   if (proxy === "pac") {
     return {
-      dispatcher: await resolveUndiciDispatcherFromPac(OPENAI_ENDPOINT),
+      dispatcher: await resolveDispatcherForUrl(OPENAI_ENDPOINT),
       proxyMode: "pac" as const,
     };
   }
@@ -150,8 +150,8 @@ const resolveDispatcher = async (proxy?: string | null | "pac") => {
     };
   }
 
-  // undefined => padrão (respeita env/ambiente)
-  return { dispatcher: undefined, proxyMode: "default" as const };
+  // undefined => padrão: usa resolução PAC/WPAD dinâmica
+  return { dispatcher: await resolveDispatcherForUrl(OPENAI_ENDPOINT), proxyMode: "default" as const };
 };
 
 const fetchWithDispatcher = async (

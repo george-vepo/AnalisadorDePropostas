@@ -115,6 +115,34 @@ NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,*.corp.local
 
 O backend monta a URL do proxy com encoding seguro de usuário/senha e não registra credenciais nos logs.
 
+
+### PAC/WPAD dinâmico (Windows)
+
+O backend também suporta resolução dinâmica de PAC/WPAD por request (incluindo fallback quando `AutoConfigURL` do registry aponta para `127.0.0.1` stale).
+
+Variáveis suportadas:
+
+```env
+PAC_URL=http://proxy.corp.local/wpad.dat
+WPAD_URL=http://webproxy.adcorp.intranet/wpad.dat
+PAC_TIMEOUT_MS=4000
+FALLBACK_PROXY_URL=http://proxy.corp.local:8080
+PROXY_USER=usuario
+PROXY_PASS=senha
+```
+
+- `PAC_URL`: força a URL do PAC (prioridade máxima).
+- `WPAD_URL`: fallback de discovery (default: `http://webproxy.adcorp.intranet/wpad.dat`).
+- `PAC_TIMEOUT_MS`: timeout para download do PAC.
+- `FALLBACK_PROXY_URL`: proxy fixo se PAC falhar/for inválido.
+- `PROXY_USER` / `PROXY_PASS`: credenciais opcionais aplicadas ao proxy sem persistir em disco.
+
+Script para diagnóstico rápido:
+
+```bash
+npm run pac:check -- https://api.openai.com/v1/responses
+```
+
 ## Scripts SQL
 
 1. Copie o conteúdo do arquivo original `Script Analise.sql` para `server/sql/analysis.sql`.
