@@ -14,7 +14,6 @@ const PAC_REFRESH_COOLDOWN_MS = 30_000;
 
 let cachedPacUrl: string | null = null;
 let pacSource: 'env' | 'discovery' | null = null;
-let pacIsReachable = false;
 let inFlightRefresh: Promise<string | null> | null = null;
 let lastRefreshAt = 0;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -46,28 +45,6 @@ const normalizePacUrl = (value: string | null) => {
     return parsed.toString();
   } catch {
     return null;
-  }
-};
-
-const PAC_VALIDATION_TIMEOUT_MS = 2_500;
-
-const validatePacReachability = async (pacUrl: string): Promise<boolean> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PAC_VALIDATION_TIMEOUT_MS);
-  try {
-    const response = await fetch(pacUrl, {
-      signal: controller.signal,
-      headers: { Accept: 'application/x-ns-proxy-autoconfig,*/*;q=0.1' },
-    });
-    if (!response.ok) {
-      return false;
-    }
-    const body = await response.text();
-    return body.length > 20;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
   }
 };
 
@@ -151,7 +128,6 @@ const applyPacUrl = (pacUrl: string | null, loggerLike: LoggerLike, reason: stri
   }
 
   if (pacUrl) {
-    pacIsReachable = true;
     cachedPacUrl = pacUrl;
     pacSource = 'discovery';
     process.env.PROXY_PAC_URL = pacUrl;
@@ -166,7 +142,6 @@ const applyPacUrl = (pacUrl: string | null, loggerLike: LoggerLike, reason: stri
     delete process.env.PROXY_PAC_URL;
   }
   cachedPacUrl = null;
-  pacIsReachable = false;
   pacSource = pacSource === 'env' ? 'env' : null;
   loggerLike.warn({ reason }, 'PAC URL não encontrado. Usando fallback.');
   return null;
@@ -192,20 +167,6 @@ export const refreshPacDiscovery = async (reason: string) => {
     lastRefreshAt = Date.now();
     try {
       const pacUrl = await getPacUrlFromWindows();
-      if (pacUrl) {
-        const reachable = await validatePacReachability(pacUrl);
-        if (!reachable) {
-          logger.warn(
-            { pacUrl: sanitizeUrl(pacUrl), reason },
-            'PAC inválido (não acessível).',
-          );
-          return applyPacUrl(null, logger, reason);
-        }
-        logger.info(
-          { pacUrl: sanitizeUrl(pacUrl), reason },
-          'PAC válido e acessível.',
-        );
-      }
       return applyPacUrl(pacUrl, logger, reason);
     } catch (error) {
       logger.warn(
@@ -228,14 +189,6 @@ export const initPacDiscovery = async (loggerLike: LoggerLike) => {
   if (process.env.PROXY_PAC_URL?.trim()) {
     pacSource = 'env';
     cachedPacUrl = process.env.PROXY_PAC_URL.trim();
-    pacIsReachable = await validatePacReachability(cachedPacUrl);
-    if (!pacIsReachable) {
-      delete process.env.PROXY_PAC_URL;
-      cachedPacUrl = null;
-      pacSource = null;
-      loggerLike.warn({}, 'PAC inválido (não acessível). Ignorando PROXY_PAC_URL do ambiente.');
-      return false;
-    }
     loggerLike.info(
       { pacUrl: sanitizeUrl(cachedPacUrl) },
       'PROXY_PAC_URL já definido no ambiente.',
@@ -278,5 +231,3 @@ export const notePacNetworkError = (error: unknown) => {
 
 export const getActivePacUrl = () =>
   process.env.PROXY_PAC_URL?.trim() || cachedPacUrl;
-
-export const hasValidPac = () => Boolean(getActivePacUrl() && pacIsReachable);
