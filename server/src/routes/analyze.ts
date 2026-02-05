@@ -43,7 +43,7 @@ analyzeRouter.post('/analyze', async (req, res) => {
 
     const sanitizedData = sanitizePayload(dbItem.resultadoJson, {
       maxArrayItems: 40,
-      maxStringLength: 1200,
+      maxPayloadBytes: 150000,
     });
 
     const prompt = buildCodexPrompt(proposalNumber, sanitizedData, analysisType);
