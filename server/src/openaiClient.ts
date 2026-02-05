@@ -3,7 +3,7 @@ import path from "node:path";
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
 import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
-import { hasValidPac, notePacNetworkError } from "./network/pacWindows";
+import { notePacNetworkError } from "./network/pacWindows";
 
 type OpenAIConfig = {
   model: string;
@@ -122,23 +122,6 @@ const getProxyMode = (proxy?: string | null | "pac") => {
   if (proxy === "pac") return "pac" as const;
   if (typeof proxy === "string" && proxy.trim()) return "proxy" as const;
   return "default" as const;
-};
-
-const resolveFallbackProxyUrl = () => {
-  const fromFallback = process.env.PROXY_FALLBACK_URL?.trim();
-  const fromHttps = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim();
-  const fromHttp = process.env.HTTP_PROXY?.trim() || process.env.http_proxy?.trim();
-  return fromFallback || fromHttps || fromHttp || null;
-};
-
-const resolveProxyModeForPacStartup = (): string | null | "pac" => {
-  if (hasValidPac()) {
-    logger.info({}, "usei PAC");
-    return "pac";
-  }
-  logger.warn({}, "PAC inválido");
-  logger.info({}, "fui direto");
-  return null;
 };
 
 const resolveDispatcher = async (proxy?: string | null | "pac") => {
@@ -404,12 +387,6 @@ const postOpenAIWithRetry = async (
 ) => {
   let attempt = 0;
   let lastError: unknown = null;
-  let currentProxy: string | null | "pac" | undefined = proxy;
-  let fallbackProxyAlreadyEnabled = false;
-
-  if (proxy === "pac") {
-    currentProxy = resolveProxyModeForPacStartup();
-  }
 
   while (attempt <= options.maxRetries) {
     const attemptStart = Date.now();
@@ -425,7 +402,7 @@ const postOpenAIWithRetry = async (
         "OpenAI: attempt started",
       );
 
-      const result = await postOpenAI(body, apiKey, options, projectId, currentProxy);
+      const result = await postOpenAI(body, apiKey, options, projectId, proxy);
 
       if (
         result?.response &&
@@ -465,14 +442,6 @@ const postOpenAIWithRetry = async (
       const retryableNetwork = isRetryableNetworkError(error);
       if (retryableNetwork && config.proxy === "pac") {
         notePacNetworkError(error);
-        if (!fallbackProxyAlreadyEnabled && currentProxy === null) {
-          const fallbackProxy = resolveFallbackProxyUrl();
-          if (fallbackProxy) {
-            fallbackProxyAlreadyEnabled = true;
-            currentProxy = fallbackProxy;
-            logger.warn({ fallbackProxy }, "usei proxy como fallback");
-          }
-        }
       }
 
       if (attempt >= options.maxRetries) {
