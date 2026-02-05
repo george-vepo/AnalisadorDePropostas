@@ -1,10 +1,6 @@
 import type { AnalysisType } from '../analysisData';
 
-const toCompactJson = (value: unknown, maxChars = 5000) => {
-  const raw = JSON.stringify(value);
-  if (raw.length <= maxChars) return { text: raw, truncated: false };
-  return { text: `${raw.slice(0, maxChars)}...`, truncated: true };
-};
+const toCompactJson = (value: unknown) => JSON.stringify(value);
 
 const getContextByAnalysisType = (analysisType: AnalysisType) => {
   if (analysisType === 'sensibilizacao') {
@@ -27,8 +23,7 @@ export const buildCodexPrompt = (proposalNumber: string, sanitizedData: unknown,
     `Proposta: ${proposalNumber}`,
     '',
     'Dados (sanitizados):',
-    compact.text,
-    compact.truncated ? 'Aviso: dados completos omitidos por limite de tamanho.' : '',
+    compact,
     '',
     'Tarefas:',
     '- Identifique inconsistências ou lacunas relevantes no fluxo da proposta.',
