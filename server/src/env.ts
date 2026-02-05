@@ -2,7 +2,9 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from './logger';
-import { bootstrapNetwork } from './network/proxyBootstrap';
+import { initPacProxyFromEnv } from './network/pacDispatcher';
+import { initPacDiscovery } from './network/pacWindows';
+import { initNetworkFromEnv } from './network/proxy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.resolve(__dirname, '../.env');
@@ -16,4 +18,14 @@ if (result.error) {
   );
 }
 
-await bootstrapNetwork(logger);
+await initPacDiscovery(logger);
+
+const pacEnabled = initPacProxyFromEnv(logger);
+logger.info(
+  { pacEnabled, pacUrlDefined: Boolean(process.env.PROXY_PAC_URL) },
+  'Proxy PAC init',
+);
+
+if (!pacEnabled) {
+  initNetworkFromEnv(logger);
+}

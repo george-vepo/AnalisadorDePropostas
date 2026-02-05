@@ -3,7 +3,6 @@ import path from "node:path";
 import { Agent, ProxyAgent } from "undici";
 import { logger } from "./logger";
 import { resolveUndiciDispatcherFromPac } from "./network/pacUndici";
-import { getStartupNetworkState } from "./network/proxyBootstrap";
 import { notePacNetworkError } from "./network/pacWindows";
 
 type OpenAIConfig = {
@@ -132,17 +131,6 @@ const resolveDispatcher = async (proxy?: string | null | "pac") => {
   }
 
   if (proxy === "pac") {
-    const startupNetwork = getStartupNetworkState();
-    if (
-      startupNetwork?.strategy === "PAC inválido (loopback sem listener)" ||
-      startupNetwork?.strategy === "DIRECT"
-    ) {
-      return {
-        dispatcher: noProxyAgent,
-        proxyMode: "no-proxy" as const,
-      };
-    }
-
     return {
       dispatcher: await resolveUndiciDispatcherFromPac(OPENAI_ENDPOINT),
       proxyMode: "pac" as const,
