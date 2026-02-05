@@ -1,98 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeForOpenAI } from '../sanitizer';
-import { normalizeFieldName } from '../sanitizer/normalizeFieldName';
+import { sanitizePayload } from '../sanitizer';
 
-const buildAllowList = (names: string[]) => new Set(names.map((name) => normalizeFieldName(name)));
+describe('sanitizePayload', () => {
+  it('removes sensitive fields', () => {
+    const payload = { nome: 'Teste', cpf: '14028002664', tokenAcesso: 'abc' };
+    const result = sanitizePayload(payload) as Record<string, unknown>;
 
-describe('sanitizeForOpenAI', () => {
-  it('masks CPF digits inside strings without removing the field', () => {
-    const allowList = buildAllowList(['mensagem']);
-    const payload = { mensagem: 'Não foi encontrado os dados para o CPF:14028002664' };
-
-    const result = sanitizeForOpenAI(payload, allowList);
-
-    expect(result.sanitizedJson).toEqual({
-      mensagem: 'Não foi encontrado os dados para o CPF:***********',
-    });
+    expect(result).toEqual({ nome: 'Teste' });
   });
 
-  it('normalizes only multiple spaces while preserving single spaces', () => {
-    const allowList = buildAllowList(['mensagem']);
-    const payload = { mensagem: 'Texto   com  espaços   úteis' };
+  it('masks CPF/CNPJ sequence inside string and truncates long content', () => {
+    const payload = { mensagem: `CPF 14028002664 ${'x'.repeat(120)}` };
+    const result = sanitizePayload(payload, { maxStringLength: 40 }) as Record<string, string>;
 
-    const result = sanitizeForOpenAI(payload, allowList);
-    const sanitized = result.sanitizedJson as typeof payload;
-
-    expect(sanitized).toEqual({ mensagem: 'Texto com espaços úteis' });
+    expect(result.mensagem).toContain('[REDACTED]');
+    expect(result.mensagem.endsWith('...')).toBe(true);
   });
 
-  it('removes DES_RETORNO when it contains large base64 content', () => {
-    const allowList = buildAllowList(['DES_RETORNO']);
-    const payload = { DES_RETORNO: `JVBERi0x${'A'.repeat(2100)}` };
+  it('limits array size', () => {
+    const payload = { itens: Array.from({ length: 5 }, (_, index) => ({ id: index })) };
+    const result = sanitizePayload(payload, { maxArrayItems: 2 }) as { itens: Array<{ id: number }> };
 
-    const result = sanitizeForOpenAI(payload, allowList);
-
-    expect(result.sanitizedJson).toEqual({});
-  });
-
-  it('removes sensitive query params from URL fields', () => {
-    const allowList = buildAllowList(['URL_SERVICO']);
-    const payload = { URL_SERVICO: 'https://example.com/api?Cpf=14028002664&foo=bar' };
-
-    const result = sanitizeForOpenAI(payload, allowList);
-    const sanitized = result.sanitizedJson as typeof payload;
-
-    const parsedUrl = new URL(sanitized.URL_SERVICO);
-    expect(parsedUrl.searchParams.get('Cpf')).toBeNull();
-    expect(parsedUrl.searchParams.get('foo')).toBe('bar');
-  });
-
-  it('removes objects that become empty after cleaning', () => {
-    const allowList = buildAllowList(['detalhes']);
-    const payload = { detalhes: { cpf: '11122233344' } };
-
-    const result = sanitizeForOpenAI(payload, allowList);
-
-    expect(result.sanitizedJson).toEqual({});
-  });
-
-  it('keeps large DES_ENVIO strings intact while masking CPFs', () => {
-    const allowList = buildAllowList(['DES_ENVIO']);
-    const text = `Inicio ${'á'.repeat(100000)} CPF 14028002664 fim ${'B'.repeat(100000)}`;
-    const payload = { DES_ENVIO: text };
-
-    const result = sanitizeForOpenAI(payload, allowList);
-    const sanitized = result.sanitizedJson as typeof payload;
-
-    expect(sanitized.DES_ENVIO).toContain('CPF ***********');
-    expect(sanitized.DES_ENVIO).not.toContain('14028002664');
-    expect(sanitized.DES_ENVIO).not.toContain('TRUNCATED');
-    expect(sanitized.DES_ENVIO.length).toBe(text.length);
-  });
-
-  it('truncates arrays with metadata when exceeding maxArrayItems', () => {
-    const allowList = buildAllowList(['itens', 'id']);
-    const payload = { itens: Array.from({ length: 500 }, (_, index) => ({ id: index })) };
-
-    const result = sanitizeForOpenAI(payload, allowList, { maxArrayItems: 50 });
-    const sanitized = result.sanitizedJson as any;
-
-    expect(sanitized.itens.__meta).toEqual({
-      arrayTruncated: true,
-      originalLength: 500,
-      kept: 50,
-    });
-    expect(sanitized.itens.items).toHaveLength(50);
-    expect(sanitized.itens.items[0]).toEqual({ id: 0 });
-  });
-
-  it('replaces deep objects beyond maxDepth with a placeholder', () => {
-    const allowList = buildAllowList(['nivel1', 'nivel2']);
-    const payload = { nivel1: { nivel2: { nivel3: { valor: 'x' } } } };
-
-    const result = sanitizeForOpenAI(payload, allowList, { maxDepth: 2 });
-    const sanitized = result.sanitizedJson as any;
-
-    expect(sanitized.nivel1.nivel2.nivel3).toBe('<DEPTH_LIMIT_REACHED>');
+    expect(result.itens).toHaveLength(2);
+    expect(result.itens[1]).toEqual({ id: 1 });
   });
 });

@@ -157,3 +157,9 @@ button:disabled {
   margin: 0;
   font-weight: 600;
 }
+
+.prompt-box {
+  width: 100%;
+  min-height: 260px;
+  white-space: pre-wrap;
+}

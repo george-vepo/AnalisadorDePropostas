@@ -2,14 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
 
-const redactPaths = [
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'headers.authorization',
-  'headers.cookie',
-  'OPENAI_API_KEY',
-  'OPENAI_CRYPTO_PASSPHRASE',
-];
+const redactPaths = ['req.headers.authorization', 'req.headers.cookie', 'headers.authorization', 'headers.cookie'];
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',

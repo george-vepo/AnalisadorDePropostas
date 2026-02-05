@@ -127,19 +127,6 @@ export const pipelineSchema = {
       required: ['items'],
       additionalProperties: false,
     },
-    openai: {
-      type: 'object',
-      properties: {
-        model: { type: 'string' },
-        temperature: { type: 'number' },
-        systemPrompt: { type: 'string' },
-        userPromptTemplate: { type: 'string' },
-        projectId: { type: 'string' },
-        proxy: { type: ['string', 'null'] },
-      },
-      required: ['model', 'temperature', 'systemPrompt', 'userPromptTemplate'],
-      additionalProperties: false,
-    },
     cache: {
       type: 'object',
       properties: {
@@ -160,7 +147,7 @@ export const pipelineSchema = {
       additionalProperties: false,
     },
   },
-  required: ['privacy', 'analysis', 'runbooks', 'openai', 'cache', 'rateLimit'],
+  required: ['privacy', 'analysis', 'runbooks', 'cache', 'rateLimit'],
   additionalProperties: false,
 } as const;
 

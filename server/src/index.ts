@@ -4,7 +4,6 @@ import { analyzeRouter } from './routes/analyze';
 import { systemRouter } from './routes/system';
 import { httpLogger, logger } from './logger';
 import { incrementRequest } from './metrics';
-import { loadConfig } from './config/loadConfig';
 
 const app = express();
 
@@ -16,16 +15,6 @@ app.use((req, _res, next) => {
 });
 app.use('/api', analyzeRouter);
 app.use('/api', systemRouter);
-
-const configResult = loadConfig();
-if (!configResult.config) {
-  logger.error(
-    { errors: configResult.errors ?? [] },
-    'Config inválido ao iniciar. /api/analyze retornará erro até corrigir.',
-  );
-} else {
-  logger.info({ hash: configResult.hash }, 'Config carregado com sucesso.');
-}
 
 const port = Number(process.env.PORT ?? 3001);
 
