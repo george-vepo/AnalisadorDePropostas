@@ -97,8 +97,8 @@ const AnalyzeProposalPage = () => {
         </select>
 
         <div className="toggle-field">
-          <label htmlFor="sanitizeEnabled">Sanitização</label>
-          <div className="switch">
+          <span>Sanitização</span>
+          <label className="switch" htmlFor="sanitizeEnabled">
             <input
               id="sanitizeEnabled"
               type="checkbox"
@@ -106,7 +106,7 @@ const AnalyzeProposalPage = () => {
               onChange={(event) => setSanitizeEnabled(event.target.checked)}
             />
             <span className="slider" aria-hidden="true" />
-          </div>
+          </label>
         </div>
 
         <label htmlFor="codProposta">Código da proposta</label>
