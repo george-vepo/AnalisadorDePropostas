@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { type AnalysisType, fetchAnalysesFromDb, SqlTimeoutError } from '../analysisData';
-import { sanitizePayload } from '../sanitizer';
+import { getAllowListSet, sanitizePayload, stripPayloadNoise } from '../sanitizer';
 import { buildCodexPrompt } from '../prompt/buildCodexPrompt';
 import { logger } from '../logger';
 
@@ -16,8 +16,14 @@ const buildErrorResponse = (message: string, details?: string) => ({
 });
 
 const parseAnalysisType = (value: unknown): AnalysisType => {
-  if (value === 'sensibilizacao' || value === 'pagamento' || value === 'padrao') return value;
-  return 'padrao';
+  if (value === 'sensibilizacao' || value === 'pagamento') return value;
+  return 'sensibilizacao';
+};
+
+const parseSanitizeEnabled = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return true;
 };
 
 analyzeRouter.post('/analyze', async (req, res) => {
@@ -26,6 +32,7 @@ analyzeRouter.post('/analyze', async (req, res) => {
 
   const proposalNumber = String((req.body as { codProposta?: unknown })?.codProposta ?? '').trim();
   const analysisType = parseAnalysisType((req.body as { analysisType?: unknown })?.analysisType);
+  const sanitizeEnabled = parseSanitizeEnabled((req.body as { sanitizeEnabled?: unknown })?.sanitizeEnabled);
 
   if (!proposalNumber || proposalNumber.length > MAX_COD_PROPOSTA_LENGTH) {
     return res
@@ -41,11 +48,15 @@ analyzeRouter.post('/analyze', async (req, res) => {
       return res.status(404).json(buildErrorResponse('Proposta não encontrada no banco.'));
     }
 
-    const sanitizedData = sanitizePayload(dbItem.resultadoJson, {
-      maxArrayItems: 40,
-      maxPayloadBytes: 150000,
-      preserveUnparseableUrls: analysisType === 'sensibilizacao' || analysisType === 'pagamento',
-    });
+    const allowList = getAllowListSet();
+    const noiseStripped = stripPayloadNoise(dbItem.resultadoJson, { allowList, maxArrayItems: 40 });
+    const sanitizedData = sanitizeEnabled
+      ? sanitizePayload(noiseStripped, {
+          maxArrayItems: 40,
+          maxPayloadBytes: 150000,
+          preserveUnparseableUrls: true,
+        })
+      : noiseStripped;
 
     const prompt = buildCodexPrompt(proposalNumber, sanitizedData, analysisType);
 
