@@ -18,11 +18,12 @@ type ErrorResponse = {
   };
 };
 
-type AnalysisType = 'padrao' | 'sensibilizacao' | 'pagamento';
+type AnalysisType = 'sensibilizacao' | 'pagamento';
 
 const AnalyzeProposalPage = () => {
   const [codProposta, setCodProposta] = useState('');
-  const [analysisType, setAnalysisType] = useState<AnalysisType>('padrao');
+  const [analysisType, setAnalysisType] = useState<AnalysisType>('sensibilizacao');
+  const [sanitizeEnabled, setSanitizeEnabled] = useState(true);
   const [status, setStatus] = useState<Status>({
     type: 'idle',
     message: 'Informe um código de proposta para gerar o prompt.',
@@ -48,7 +49,7 @@ const AnalyzeProposalPage = () => {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codProposta: proposal, analysisType }),
+        body: JSON.stringify({ codProposta: proposal, analysisType, sanitizeEnabled }),
       });
       const payload = (await response.json()) as AnalyzeResponse & ErrorResponse;
 
@@ -91,10 +92,22 @@ const AnalyzeProposalPage = () => {
           value={analysisType}
           onChange={(event) => setAnalysisType(event.target.value as AnalysisType)}
         >
-          <option value="padrao">Análise padrão</option>
           <option value="sensibilizacao">Análise de sensibilização</option>
           <option value="pagamento">Análise de pagamento</option>
         </select>
+
+        <div className="toggle-field">
+          <label htmlFor="sanitizeEnabled">Sanitização</label>
+          <div className="switch">
+            <input
+              id="sanitizeEnabled"
+              type="checkbox"
+              checked={sanitizeEnabled}
+              onChange={(event) => setSanitizeEnabled(event.target.checked)}
+            />
+            <span className="slider" aria-hidden="true" />
+          </div>
+        </div>
 
         <label htmlFor="codProposta">Código da proposta</label>
         <input
