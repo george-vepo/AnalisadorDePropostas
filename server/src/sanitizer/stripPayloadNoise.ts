@@ -6,6 +6,7 @@ type StripPayloadOptions = {
   maxStringLength?: number;
   maxMessageLength?: number;
   maxStackTraceLength?: number;
+  sanitizeStrings?: boolean;
 };
 
 const DEFAULT_MAX_ARRAY_ITEMS = 10;
@@ -104,6 +105,14 @@ const truncateWithSuffix = (value: string, maxLength: number): string => {
 };
 
 const sanitizeString = (fieldNorm: string, value: string, options: Required<StripPayloadOptions>): unknown => {
+  if (!options.sanitizeStrings) {
+    if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
+    if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
+    if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
+    if (looksLikeHexBlob(value)) return '[REMOVIDO_HEX]';
+    return value;
+  }
+
   if (looksLikeJson(value)) {
     const sanitizedJson = sanitizeJsonStringByRegex(value, options.allowList);
     if (sanitizedJson.length > options.maxStringLength) return '[REMOVIDO_POR_TAMANHO]';
@@ -195,6 +204,7 @@ export const stripPayloadNoise = (input: unknown, options: StripPayloadOptions):
     maxStringLength: options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
     maxMessageLength: options.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH,
     maxStackTraceLength: options.maxStackTraceLength ?? DEFAULT_MAX_STACKTRACE_LENGTH,
+    sanitizeStrings: options.sanitizeStrings ?? true,
   };
   return sanitizeAny(input, normalizedOptions);
 };

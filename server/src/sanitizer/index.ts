@@ -7,3 +7,4 @@ export {
 export type { SanitizeStats } from './sanitizePayload';
 export { getAllowListSet, loadAllowListFields } from './allowlistFields';
 export { normalizeFieldName } from './normalizeFieldName';
+export { stripPayloadNoise } from './stripPayloadNoise';
