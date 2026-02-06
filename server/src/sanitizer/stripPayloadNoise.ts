@@ -99,6 +99,31 @@ const sanitizeJsonStringByRegex = (value: string, allowList: Set<string>): strin
   return stripNonInformationalChars(sanitized);
 };
 
+const sanitizeJsonStringByBlobRemoval = (value: string): string => {
+  const sensitiveFieldRegex = new RegExp(
+    `"([^"]+)"\\s*:\\s*("([^"\\\\]|\\\\.)*"|\\d+|true|false|null)`,
+    'gi',
+  );
+  return value.replace(sensitiveFieldRegex, (match, key, rawValue) => {
+    if (typeof rawValue !== 'string' || !rawValue.startsWith('"')) return match;
+    const normalizedKey = normalizeFieldName(key) ?? '';
+    const isTokenField = normalizedKey
+      ? TOKEN_FIELD_MARKERS.some((marker) => normalizedKey.includes(marker))
+      : false;
+    if (isTokenField) return `"${key}":"[REMOVIDO]"`;
+
+    const innerValue = rawValue.slice(1, -1).trim();
+    if (innerValue.startsWith('{') || innerValue.startsWith('[')) {
+      return match;
+    }
+    if (looksLikePem(innerValue)) return `"${key}":"[REMOVIDO_CHAVE]"`;
+    if (looksLikeJwt(innerValue)) return `"${key}":"[REMOVIDO_TOKEN]"`;
+    if (looksLikeBase64(innerValue)) return `"${key}":"[REMOVIDO_BASE64]"`;
+    if (looksLikeHexBlob(innerValue)) return `"${key}":"[REMOVIDO_HEX]"`;
+    return match;
+  });
+};
+
 const truncateWithSuffix = (value: string, maxLength: number): string => {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength)}...(truncado)`;
@@ -106,6 +131,9 @@ const truncateWithSuffix = (value: string, maxLength: number): string => {
 
 const sanitizeString = (fieldNorm: string, value: string, options: Required<StripPayloadOptions>): unknown => {
   if (!options.sanitizeStrings) {
+    if (looksLikeJson(value)) {
+      return sanitizeJsonStringByBlobRemoval(value);
+    }
     if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
     if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
     if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
