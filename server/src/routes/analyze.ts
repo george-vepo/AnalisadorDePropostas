@@ -49,7 +49,11 @@ analyzeRouter.post('/analyze', async (req, res) => {
     }
 
     const allowList = getAllowListSet();
-    const noiseStripped = stripPayloadNoise(dbItem.resultadoJson, { allowList, maxArrayItems: 40 });
+    const noiseStripped = stripPayloadNoise(dbItem.resultadoJson, {
+      allowList,
+      maxArrayItems: 40,
+      sanitizeStrings: sanitizeEnabled,
+    });
     const sanitizedData = sanitizeEnabled
       ? sanitizePayload(noiseStripped, {
           maxArrayItems: 40,
