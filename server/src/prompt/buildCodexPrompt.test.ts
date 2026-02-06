@@ -52,18 +52,10 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Tipo de análise: pagamento');
   });
 
-  it('does not replace endpoint URL for non-sensibilizacao analysis types', () => {
-    const payload = { urlServico: '/api/v1/Proposta/ConsultarProposta?proposta=123' };
-    const prompt = buildCodexPrompt('123', payload, 'padrao');
-
-    expect(prompt).toContain('/api/v1/Proposta/ConsultarProposta?proposta=123');
-    expect(prompt).not.toContain('servico_consultar_proposta_de_proposta?proposta=123');
-  });
-
   it('does not truncate or show omission warning for large payloads', () => {
     const bigValue = 'x'.repeat(6000);
     const payload = { detalhe: bigValue };
-    const prompt = buildCodexPrompt('123', payload, 'padrao');
+    const prompt = buildCodexPrompt('123', payload, 'sensibilizacao');
 
     expect(prompt).toContain(JSON.stringify(payload));
     expect(prompt).not.toContain('Aviso: dados completos omitidos por limite de tamanho.');

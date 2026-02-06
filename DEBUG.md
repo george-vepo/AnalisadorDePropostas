@@ -20,7 +20,7 @@ npm install
    ```
 
 2. Preencha as variáveis obrigatórias (conforme `README.md`), incluindo `DB_CONNECTION_STRING`.
-3. Copie o SQL para `server/sql/analysis.sql` conforme instruções do `README.md`.
+3. Copie os scripts SQL para `server/sql/analysis_sensibilizacao.sql` e `server/sql/analysis_pagamento.sql` conforme instruções do `README.md`.
 
 ## 3) Abrir o projeto no VS Code
 

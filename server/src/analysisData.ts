@@ -5,25 +5,12 @@ import { performance } from 'node:perf_hooks';
 import { getPool, sql } from './db';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sqlPath = path.resolve(__dirname, '../sql/analysis.sql');
-const jsonSqlPath = path.resolve(__dirname, '../sql/analysis_json.sql');
 const sensibilizacaoSqlPath = path.resolve(__dirname, '../sql/analysis_sensibilizacao.sql');
 const pagamentoSqlPath = path.resolve(__dirname, '../sql/analysis_pagamento.sql');
-const analysisSql = readFileSync(sqlPath, 'utf-8');
-const analysisJsonSql = readFileSync(jsonSqlPath, 'utf-8');
 const analysisSensibilizacaoSql = readFileSync(sensibilizacaoSqlPath, 'utf-8');
 const analysisPagamentoSql = readFileSync(pagamentoSqlPath, 'utf-8');
 
-export type AnalysisType = 'padrao' | 'sensibilizacao' | 'pagamento';
-
-export type AnalysisDataResult = {
-  data: Record<string, unknown>;
-  recordsets: Array<Array<Record<string, unknown>>>;
-  rowsBySet: number[];
-  elapsedMs: number;
-  format: 'json' | 'recordsets';
-  fallbackUsed: boolean;
-};
+export type AnalysisType = 'sensibilizacao' | 'pagamento';
 
 export type MultiAnalysisDataItem = {
   codigoProposta: string;
@@ -105,35 +92,6 @@ const executeMultiQueryWithRetry = async (
   return [];
 };
 
-const toRecordsetData = (recordsets: Array<Array<Record<string, unknown>>>) =>
-  recordsets.reduce<Record<string, unknown>>((acc, set, index) => {
-    acc[`set${index}`] = set;
-    return acc;
-  }, {});
-
-const extractJsonData = (recordsets: Array<Array<Record<string, unknown>>>) => {
-  const firstSet = recordsets[0] ?? [];
-  const row = firstSet[0];
-  if (!row) {
-    throw new Error('Resultado JSON vazio.');
-  }
-
-  const jsonValue = (row as Record<string, unknown>).data ?? Object.values(row)[0];
-  if (!jsonValue) {
-    throw new Error('Coluna JSON não encontrada.');
-  }
-
-  if (typeof jsonValue === 'string') {
-    return JSON.parse(jsonValue) as Record<string, unknown>;
-  }
-
-  if (typeof jsonValue === 'object') {
-    return jsonValue as Record<string, unknown>;
-  }
-
-  throw new Error('Formato de JSON inválido.');
-};
-
 const extractMultiJsonData = (recordsets: Array<Array<Record<string, unknown>>>) => {
   const firstSet = recordsets[0] ?? [];
   return firstSet.map((row) => {
@@ -169,58 +127,14 @@ const extractMultiJsonData = (recordsets: Array<Array<Record<string, unknown>>>)
   });
 };
 
-const resolveSqlByType = (analysisType: AnalysisType | undefined) => {
+const resolveSqlByType = (analysisType: AnalysisType) => {
   if (analysisType === 'sensibilizacao') return analysisSensibilizacaoSql;
-  if (analysisType === 'pagamento') return analysisPagamentoSql;
-  return analysisJsonSql;
-};
-
-const executeRecordsetsQuery = async (codProposta: string, pool: Awaited<ReturnType<typeof getPool>>) => {
-  return executeQueryWithRetry(analysisSql, codProposta, pool);
-};
-
-export const fetchAnalysisFromDb = async (
-  codProposta: string,
-  analysisType: AnalysisType = 'padrao',
-): Promise<AnalysisDataResult> => {
-  const startedAt = performance.now();
-  const pool = await getPool();
-  const sqlText = resolveSqlByType(analysisType);
-
-  try {
-    const recordsets = await executeQueryWithRetry(sqlText, codProposta, pool);
-    const data = extractJsonData(recordsets);
-    const elapsedMs = Math.round(performance.now() - startedAt);
-
-    return {
-      data,
-      recordsets,
-      rowsBySet: recordsets.map((set) => set.length),
-      elapsedMs,
-      format: 'json',
-      fallbackUsed: false,
-    };
-  } catch (error) {
-    if (error instanceof SqlTimeoutError) {
-      throw error;
-    }
-    const recordsets = await executeRecordsetsQuery(codProposta, pool);
-    const elapsedMs = Math.round(performance.now() - startedAt);
-
-    return {
-      data: toRecordsetData(recordsets),
-      recordsets,
-      rowsBySet: recordsets.map((set) => set.length),
-      elapsedMs,
-      format: 'recordsets',
-      fallbackUsed: true,
-    };
-  }
+  return analysisPagamentoSql;
 };
 
 export const fetchAnalysesFromDb = async (
   codPropostas: string[],
-  analysisType: AnalysisType = 'padrao',
+  analysisType: AnalysisType,
 ): Promise<MultiAnalysisDataResult> => {
   const startedAt = performance.now();
   const pool = await getPool();

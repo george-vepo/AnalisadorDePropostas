@@ -301,23 +301,21 @@ const replaceEndpointsByAlias = (value: unknown, aliases: readonly (readonly [st
   );
 };
 const getContextByAnalysisType = (analysisType: AnalysisType) => {
-  if (analysisType === 'sensibilizacao') {
-    return 'Contexto: Quero diagnosticar erro de sensibilização (repasse CVP -> SIGPF/CAIXA) e inconsistências entre integrações e base interna.';
-  }
-
   if (analysisType === 'pagamento') {
     return 'Contexto: Quero diagnosticar o fluxo de pagamento (boleto/link, débito, status final) e inconsistências entre etapas.';
   }
 
-  return 'Contexto: Estou usando um app que extrai dados de proposta e quero revisar/diagnosticar inconsistências.';
+  return 'Contexto: Quero diagnosticar erro de sensibilização (repasse CVP -> SIGPF/CAIXA) e inconsistências entre integrações e base interna.';
 };
 
-export const buildCodexPrompt = (proposalNumber: string, sanitizedData: unknown, analysisType: AnalysisType = 'padrao') => {
-  const dataForPrompt = analysisType === 'sensibilizacao'
-    ? replaceEndpointsByAlias(sanitizedData, sortedSensibilizacaoEndpointAliases)
-    : analysisType === 'pagamento'
-      ? replaceEndpointsByAlias(sanitizedData, sortedPagamentoEndpointAliases)
-      : sanitizedData;
+export const buildCodexPrompt = (
+  proposalNumber: string,
+  sanitizedData: unknown,
+  analysisType: AnalysisType = 'sensibilizacao',
+) => {
+  const dataForPrompt = analysisType === 'pagamento'
+    ? replaceEndpointsByAlias(sanitizedData, sortedPagamentoEndpointAliases)
+    : replaceEndpointsByAlias(sanitizedData, sortedSensibilizacaoEndpointAliases);
   const compact = toCompactJson(dataForPrompt);
 
   return [

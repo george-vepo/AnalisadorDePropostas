@@ -6,6 +6,7 @@ type StripPayloadOptions = {
   maxStringLength?: number;
   maxMessageLength?: number;
   maxStackTraceLength?: number;
+  sanitizeStrings?: boolean;
 };
 
 const DEFAULT_MAX_ARRAY_ITEMS = 10;
@@ -14,6 +15,7 @@ const DEFAULT_MAX_MESSAGE_LENGTH = 2000;
 const DEFAULT_MAX_STACKTRACE_LENGTH = 2000;
 
 const TOKEN_FIELD_MARKERS = ['token', 'bearer', 'authorization', 'cookie', 'sha', 'rsa', 'key', 'secret'];
+const BINARY_FIELD_MARKERS = ['base64', 'arquivo', 'file', 'documento', 'anexo', 'imagem', 'payload', 'conteudo'];
 const INFORMATIVE_MARKERS = [
   'status',
   'sucesso',
@@ -39,6 +41,13 @@ const looksLikeBase64 = (value: string): boolean => {
   return /^[A-Za-z0-9_-]+$/.test(value);
 };
 
+const BASE64_PREFIXES = ['JVBERi0x', '/9j/', 'iVBORw0KGgo', 'UEsDB'];
+const looksLikeBase64Payload = (value: string): boolean => {
+  if (BASE64_PREFIXES.some((prefix) => value.startsWith(prefix))) return true;
+  if (value.length < 50) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+};
+
 const looksLikeHexBlob = (value: string): boolean => {
   if (value.length < 64) return false;
   return /^[A-Fa-f0-9]+$/.test(value);
@@ -50,6 +59,10 @@ const looksLikePem = (value: string): boolean => {
 
 const shouldDropByFieldName = (fieldNorm: string): boolean => {
   return TOKEN_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
+};
+
+const isBinaryFieldName = (fieldNorm: string): boolean => {
+  return BINARY_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
 };
 
 const isInformativeFieldName = (fieldNorm: string): boolean => {
@@ -104,6 +117,14 @@ const truncateWithSuffix = (value: string, maxLength: number): string => {
 };
 
 const sanitizeString = (fieldNorm: string, value: string, options: Required<StripPayloadOptions>): unknown => {
+  if (!options.sanitizeStrings) {
+    if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
+    if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
+    if (looksLikeBase64(value) || looksLikeBase64Payload(value)) return '[REMOVIDO_BASE64]';
+    if (looksLikeHexBlob(value)) return '[REMOVIDO_HEX]';
+    return value;
+  }
+
   if (looksLikeJson(value)) {
     const sanitizedJson = sanitizeJsonStringByRegex(value, options.allowList);
     if (sanitizedJson.length > options.maxStringLength) return '[REMOVIDO_POR_TAMANHO]';
@@ -112,7 +133,7 @@ const sanitizeString = (fieldNorm: string, value: string, options: Required<Stri
 
   if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
   if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
-  if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
+  if (looksLikeBase64(value) || looksLikeBase64Payload(value)) return '[REMOVIDO_BASE64]';
   if (looksLikeHexBlob(value)) return '[REMOVIDO_HEX]';
 
   if (fieldNorm.includes('stacktrace')) {
@@ -154,6 +175,7 @@ export const sanitizeAny = (
       const normalizedName = normalizeFieldName(key);
       if (!normalizedName) return acc;
       if (shouldDropByFieldName(normalizedName)) return acc;
+      if (isBinaryFieldName(normalizedName)) return acc;
 
       const sanitizedValue = sanitizeAny(value, options, normalizedName);
       const isValueObject = sanitizedValue && typeof sanitizedValue === 'object' && !Array.isArray(sanitizedValue);
@@ -195,6 +217,7 @@ export const stripPayloadNoise = (input: unknown, options: StripPayloadOptions):
     maxStringLength: options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
     maxMessageLength: options.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH,
     maxStackTraceLength: options.maxStackTraceLength ?? DEFAULT_MAX_STACKTRACE_LENGTH,
+    sanitizeStrings: options.sanitizeStrings ?? true,
   };
   return sanitizeAny(input, normalizedOptions);
 };
