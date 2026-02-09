@@ -15,6 +15,7 @@ const DEFAULT_MAX_MESSAGE_LENGTH = 2000;
 const DEFAULT_MAX_STACKTRACE_LENGTH = 2000;
 
 const TOKEN_FIELD_MARKERS = ['token', 'bearer', 'authorization', 'cookie', 'sha', 'rsa', 'key', 'secret'];
+const BINARY_FIELD_MARKERS = ['base64', 'arquivo', 'file', 'documento', 'anexo', 'imagem', 'payload', 'conteudo'];
 const INFORMATIVE_MARKERS = [
   'status',
   'sucesso',
@@ -38,6 +39,13 @@ const looksLikeBase64 = (value: string): boolean => {
   if (value.length < 200) return false;
   if (/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return true;
   return /^[A-Za-z0-9_-]+$/.test(value);
+};
+
+const BASE64_PREFIXES = ['JVBERi0x', '/9j/', 'iVBORw0KGgo', 'UEsDB'];
+const looksLikeBase64Payload = (value: string): boolean => {
+  if (BASE64_PREFIXES.some((prefix) => value.startsWith(prefix))) return true;
+  if (value.length < 50) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 };
 
 const looksLikeHexBlob = (value: string): boolean => {
@@ -85,6 +93,10 @@ const sanitizeUrlString = (value: string): string => {
 
 const shouldDropByFieldName = (fieldNorm: string): boolean => {
   return TOKEN_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
+};
+
+const isBinaryFieldName = (fieldNorm: string): boolean => {
+  return BINARY_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
 };
 
 const isInformativeFieldName = (fieldNorm: string): boolean => {
@@ -180,7 +192,7 @@ const sanitizeString = (fieldNorm: string, value: string, options: Required<Stri
     }
     if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
     if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
-    if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
+    if (looksLikeBase64(value) || looksLikeBase64Payload(value)) return '[REMOVIDO_BASE64]';
     if (looksLikeHexBlob(value)) return '[REMOVIDO_HEX]';
     return value;
   }
@@ -193,7 +205,7 @@ const sanitizeString = (fieldNorm: string, value: string, options: Required<Stri
 
   if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
   if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
-  if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
+  if (looksLikeBase64(value) || looksLikeBase64Payload(value)) return '[REMOVIDO_BASE64]';
   if (looksLikeHexBlob(value)) return '[REMOVIDO_HEX]';
 
   if (fieldNorm.includes('stacktrace')) {
@@ -235,6 +247,7 @@ export const sanitizeAny = (
       const normalizedName = normalizeFieldName(key);
       if (!normalizedName) return acc;
       if (shouldDropByFieldName(normalizedName)) return acc;
+      if (isBinaryFieldName(normalizedName)) return acc;
 
       const sanitizedValue = sanitizeAny(value, options, normalizedName);
       const isValueObject = sanitizedValue && typeof sanitizedValue === 'object' && !Array.isArray(sanitizedValue);
