@@ -49,6 +49,40 @@ const looksLikePem = (value: string): boolean => {
   return value.includes('-----BEGIN ') || value.includes('PRIVATE KEY');
 };
 
+const looksLikeUrl = (value: string): boolean => {
+  return /^https?:\/\//i.test(value);
+};
+
+const hasSensitiveDigits = (value: string): boolean => {
+  const cpfRegex = /(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/;
+  const cnpjRegex = /(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{14})/;
+  return cpfRegex.test(value) || cnpjRegex.test(value);
+};
+
+const sanitizeUrlString = (value: string): string => {
+  try {
+    const url = new URL(value);
+    const params = Array.from(url.searchParams.entries());
+    params.forEach(([name, paramValue]) => {
+      const normalizedName = normalizeFieldName(name) ?? '';
+      const isTokenField = normalizedName
+        ? TOKEN_FIELD_MARKERS.some((marker) => normalizedName.includes(marker))
+        : false;
+      const hasSensitiveValue =
+        looksLikeJwt(paramValue) || looksLikeBase64(paramValue) || looksLikeHexBlob(paramValue) || hasSensitiveDigits(paramValue);
+      if (isTokenField || hasSensitiveValue) {
+        url.searchParams.delete(name);
+      }
+    });
+    if (url.searchParams.toString().length === 0) {
+      url.search = '';
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+};
+
 const shouldDropByFieldName = (fieldNorm: string): boolean => {
   return TOKEN_FIELD_MARKERS.some((marker) => fieldNorm.includes(marker));
 };
@@ -99,6 +133,38 @@ const sanitizeJsonStringByRegex = (value: string, allowList: Set<string>): strin
   return stripNonInformationalChars(sanitized);
 };
 
+const sanitizeJsonStringByBlobRemoval = (value: string): string => {
+  const sensitiveFieldRegex = new RegExp(
+    `"([^"]+)"\\s*:\\s*("([^"\\\\]|\\\\.)*"|\\d+|true|false|null)`,
+    'gi',
+  );
+  return value.replace(sensitiveFieldRegex, (match, key, rawValue) => {
+    if (typeof rawValue !== 'string' || !rawValue.startsWith('"')) return match;
+    const normalizedKey = normalizeFieldName(key) ?? '';
+    const isTokenField = normalizedKey
+      ? TOKEN_FIELD_MARKERS.some((marker) => normalizedKey.includes(marker))
+      : false;
+    if (isTokenField) return `"${key}":"[REMOVIDO]"`;
+
+    const innerValue = rawValue.slice(1, -1).trim();
+    if (innerValue.startsWith('{') || innerValue.startsWith('[')) {
+      return match;
+    }
+    if (looksLikeUrl(innerValue)) {
+      const sanitizedUrl = sanitizeUrlString(innerValue);
+      if (sanitizedUrl !== innerValue) {
+        return `"${key}":"${sanitizedUrl}"`;
+      }
+      return match;
+    }
+    if (looksLikePem(innerValue)) return `"${key}":"[REMOVIDO_CHAVE]"`;
+    if (looksLikeJwt(innerValue)) return `"${key}":"[REMOVIDO_TOKEN]"`;
+    if (looksLikeBase64(innerValue)) return `"${key}":"[REMOVIDO_BASE64]"`;
+    if (looksLikeHexBlob(innerValue)) return `"${key}":"[REMOVIDO_HEX]"`;
+    return match;
+  });
+};
+
 const truncateWithSuffix = (value: string, maxLength: number): string => {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength)}...(truncado)`;
@@ -106,6 +172,12 @@ const truncateWithSuffix = (value: string, maxLength: number): string => {
 
 const sanitizeString = (fieldNorm: string, value: string, options: Required<StripPayloadOptions>): unknown => {
   if (!options.sanitizeStrings) {
+    if (looksLikeJson(value)) {
+      return sanitizeJsonStringByBlobRemoval(value);
+    }
+    if (looksLikeUrl(value)) {
+      return sanitizeUrlString(value);
+    }
     if (looksLikePem(value)) return '[REMOVIDO_CHAVE]';
     if (looksLikeJwt(value)) return '[REMOVIDO_TOKEN]';
     if (looksLikeBase64(value)) return '[REMOVIDO_BASE64]';
